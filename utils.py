@@ -1,5 +1,6 @@
 import pandas as pd
 import io
+import os
 import re
 
 def parse_time_to_seconds(time_str):
@@ -23,6 +24,9 @@ def parse_roasttime_csv(file):
         df: DataFrame with time-series data.
         milestones: Dictionary of actual events {EventName: TimeSeconds}.
     """
+    content = ""
+    try:
+        # Streamlit UploadedFile
     # Handle different file-like objects
     content = ""
     try:
@@ -35,6 +39,12 @@ def parse_roasttime_csv(file):
                 content = val
         # String path
         elif isinstance(file, str):
+             if not os.path.exists(file):
+                 raise FileNotFoundError(f"File not found: {file}")
+             with open(file, 'r', encoding='utf-8') as f:
+                 content = f.read()
+        # StringIO/File-like
+        elif hasattr(file, 'read'):
              with open(file, 'r') as f:
                  content = f.read()
         # StringIO or file-like opened in text mode
@@ -68,6 +78,9 @@ def parse_roasttime_csv(file):
                 next_line = lines[i+1]
                 parts = next_line.split(',')
                 try:
+                    if "Start time" in headers:
+                        idx = headers.index("Start time")
+                    else:
                     # Find column index for "Start time" if possible
                     if "Start time" in headers:
                         idx = headers.index("Start time")
@@ -84,6 +97,9 @@ def parse_roasttime_csv(file):
 
         # 1st Crack Parsing
         if "1st Crack" in line:
+            if i + 2 < len(lines):
+                data_line = lines[i+2]
+                parts = data_line.split(',')
             # Format: 1st Crack,Start,,,End,,,,,
             # Next line: ,Index,Time,,Index,Time,,,,
             # Next line: ,960,8:00,,-,-,,,,
@@ -133,6 +149,20 @@ def parse_profile_csv(file):
     """
     Parses the Profile CSV file.
     """
+    # Handle file path vs file-like object
+    try:
+        if isinstance(file, str):
+            if not os.path.exists(file):
+                raise FileNotFoundError(f"File not found: {file}")
+            df = pd.read_csv(file)
+        else:
+            # If it's a StringIO or UploadedFile
+            # Reset pointer just in case
+            if hasattr(file, 'seek'):
+                file.seek(0)
+            df = pd.read_csv(file)
+    except Exception as e:
+        raise ValueError(f"Failed to read profile file: {e}")
     # Handle file reading similar to above if needed, but pd.read_csv handles most
     try:
         df = pd.read_csv(file)
@@ -160,6 +190,10 @@ def calculate_ror(df, temp_col='IBTS Temp', time_col='Time_Seconds', window_seco
     """
     Calculates RoR (Rate of Rise).
     """
+    if df.empty or time_col not in df.columns:
+        return df
+
+    df = df.sort_values(by=time_col).copy()
     df = df.sort_values(by=time_col).copy()
 
     # Calculate gradient over window
@@ -176,3 +210,42 @@ def smooth_data(series, window=30):
     Smooths data using a rolling mean.
     """
     return series.rolling(window=window, min_periods=1, center=True).mean()
+
+# --- New File Management Functions ---
+
+def get_profiles(base_path='data'):
+    """
+    Scans the base_path and returns a list of profile names (subdirectories).
+    """
+    if not os.path.exists(base_path):
+        return []
+
+    profiles = [d for d in os.listdir(base_path) if os.path.isdir(os.path.join(base_path, d))]
+    return sorted(profiles)
+
+def get_roast_files(profile_name, base_path='data'):
+    """
+    Returns the path to the plan file and a list of paths to roast files.
+    Structure:
+       data/ProfileName/Plan/*.csv (takes first one)
+       data/ProfileName/Wypaly/*.csv (returns all)
+    """
+    profile_dir = os.path.join(base_path, profile_name)
+    plan_dir = os.path.join(profile_dir, 'Plan')
+    wypaly_dir = os.path.join(profile_dir, 'Wypaly') # Using 'Wypaly' without special chars for safety, or check both
+
+    # Check for 'Wypały' if 'Wypaly' doesn't exist
+    if not os.path.exists(wypaly_dir) and os.path.exists(os.path.join(profile_dir, 'Wypały')):
+        wypaly_dir = os.path.join(profile_dir, 'Wypały')
+
+    plan_file = None
+    if os.path.exists(plan_dir):
+        files = [f for f in os.listdir(plan_dir) if f.endswith('.csv')]
+        if files:
+            plan_file = os.path.join(plan_dir, files[0])
+
+    roast_files = []
+    if os.path.exists(wypaly_dir):
+        roast_files = [os.path.join(wypaly_dir, f) for f in os.listdir(wypaly_dir) if f.endswith('.csv')]
+
+    return plan_file, sorted(roast_files)

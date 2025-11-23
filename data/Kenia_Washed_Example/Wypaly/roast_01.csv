@@ -1,0 +1,17 @@
+Some Metadata
+More Metadata
+Yellowing,Start index,Start time,,,,,,
+,300,5:00,,,,,,
+1st Crack,Start,,,End,,,,,
+,Index,Time,,Index,Time,,,,
+,540,9:00,,-,-,,,,
+Timeline,Index,Time,IBTS Temp,Bean Probe Temp,IBTS ROR,Bean Probe ROR
+,0,0:00,200,180,0,0
+,1,0:01,198,179,-2,-1
+,2,0:02,196,178,-2,-1
+,3,0:03,195,177,-1,-1
+,30,0:30,130,120,-1,-1
+,60,1:00,100,100,-1,-1
+,90,1:30,92,90,0,0
+,300,5:00,162,150,15,10
+,540,9:00,202,190,8,6
