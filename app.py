@@ -149,33 +149,21 @@ else:
 
     # Funkcja pomocnicza do rzutowania L-kształtnego
     def add_l_projection(fig, x_val, y_val, color, row=1, col=1, is_time_x=True, show_y=True, show_x=True, text_offset_y=0):
-        # Linia Pionowa: (x, 0) -> (x, y)
-        # Ale uwaga: 0 na osi Y to może być środek wykresu.
-        # Chcemy od "dołu" wykresu do punktu.
-        # Użyjmy yref='y domain' dla dołu? Nie, bo y_val jest w danych.
-        # Więc musimy znać min Y. Przyjmijmy 0 lub min z danych.
-        # Jednak Plotly shapes z xref='x', yref='y' wymagają wartości.
-        # Jeśli rysujemy od osi X (y=0) do punktu:
+        # Konstruowanie poprawnych identyfikatorów osi dla add_annotation
+        # Plotly używa 'y domain' zamiast 'y1 domain', ale 'y2 domain' jest ok.
+        y_axis_name = f"y{row}" if row > 1 else "y"
+        x_axis_name = f"x{col}" if col > 1 else "x"
 
-        # Jeśli y_val jest None (np. tylko czas zdarzenia), rysujemy tylko pionową linię przez cały wykres?
-        # User: "od dołu do punktu oraz od lewej do punktu"
+        yref_domain = f"{y_axis_name} domain"
+        xref_domain = f"{x_axis_name} domain"
 
         if y_val is None:
-            # Jeśli nie mamy wartości Y (np. sam czas milestone), rysujemy pełną linię pionową (dashed)
              fig.add_vline(x=x_val, line_width=1, line_dash="dash", line_color=color, opacity=0.5, row=row, col=col)
         else:
-            # L-shape
-            # Pionowa: od 0 (lub dołu) do y_val
-            # Pozioma: od 0 (lewa) do x_val
-
-            # Aby linia zaczynała się od "osi", musimy przyjąć jakiś punkt startowy.
-            # Dla temperatury 0 stopni to dobry start.
-            # Dla czasu 0 sekund.
-
+            # L-shape: używamy po prostu row/col w add_shape (nowoczesne Plotly to obsługuje)
             fig.add_shape(type="line",
                 x0=x_val, y0=0, x1=x_val, y1=y_val,
                 line=dict(color=color, width=1, dash="dash"),
-                xref=f"x{col}", yref=f"y{row}" if row==1 else f"y{row+1}", # To jest tricky w subplots, trzeba uważać na indeksy osi
                 row=row, col=col
             )
 
@@ -183,40 +171,31 @@ else:
                  fig.add_shape(type="line",
                     x0=0, y0=y_val, x1=x_val, y1=y_val,
                     line=dict(color=color, width=1, dash="dash"),
-                    xref=f"x{col}", yref=f"y{row}",
                     row=row, col=col
                 )
 
-        # Etykieta na osi X
         if show_x:
-            if is_time_x:
-                x_text = f"{int(x_val//60)}:{int(x_val%60):02d}"
-            else:
-                x_text = f"{x_val:.1f}"
-
+            x_text = f"{int(x_val//60)}:{int(x_val%60):02d}" if is_time_x else f"{x_val:.1f}"
             fig.add_annotation(
                 x=x_val, y=0,
-                xref=f"x{col}", yref=f"y{row} domain", # y domain relative to subplot
+                xref=x_axis_name, yref=yref_domain,
                 text=x_text,
                 showarrow=False,
                 font=dict(size=10, color=color),
                 yshift=-15,
-                bgcolor="rgba(0,0,0,0.5)",
-                row=row, col=col
+                bgcolor="rgba(0,0,0,0.5)"
             )
 
         if show_y and y_val is not None:
-            # Etykieta na osi Y
             fig.add_annotation(
                 x=0, y=y_val,
-                xref=f"x{col} domain", yref=f"y{row}",
+                xref=xref_domain, yref=y_axis_name,
                 text=f"{y_val:.1f}",
                 showarrow=False,
                 font=dict(size=10, color=color),
                 xshift=-25,
                 xanchor="right",
-                bgcolor="rgba(0,0,0,0.5)",
-                row=row, col=col
+                bgcolor="rgba(0,0,0,0.5)"
             )
 
     # --- Konstrukcja Wykresów z Subplots ---
