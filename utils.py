@@ -371,3 +371,88 @@ def get_roast_files(profile_name, base_path='data'):
         roast_files = [os.path.join(wypaly_dir, f) for f in os.listdir(wypaly_dir) if f.endswith('.csv')]
 
     return plan_file, sorted(roast_files)
+
+def calculate_thermal_dose(df, temp_col='IBTS Temp', time_col='Time_Seconds', t_base=100.0, start_time_threshold=0.0):
+    """
+    Oblicza skumulowaną Dawkę Termiczną.
+
+    Wzór wagi: V(T) = 2 ** ((T - T_bazowa) / 10)
+    Przyrost = V(T_srednia) * delta_t_sekundy
+
+    Args:
+        df: DataFrame z danymi.
+        temp_col: Nazwa kolumny z temperaturą.
+        time_col: Nazwa kolumny z czasem (w sekundach).
+        t_base: Temperatura bazowa (waga=1).
+        start_time_threshold: Czas początkowy (w sekundach), od którego liczymy dawkę.
+
+    Returns:
+        df: DataFrame z dodaną kolumną 'Thermal_Dose_<Sensor>' (lub podobną).
+    """
+    if df.empty or time_col not in df.columns or temp_col not in df.columns:
+        return df
+
+    # Tworzymy kopię i filtrujemy według czasu startu
+    # Ważne: nie modyfikujemy oryginalnego df w miejscu, ale musimy zwrócić kolumnę dopasowaną do oryginału.
+    # Najlepiej obliczyć to na kopii, a potem złączyć wynik.
+
+    # Sortowanie
+    df_calc = df[df[time_col] >= start_time_threshold].copy()
+    if df_calc.empty:
+        return df
+
+    df_calc = df_calc.sort_values(by=time_col)
+
+    # Oblicz delta_t (czas trwania kroku)
+    # Dla metody trapezów lub prostokątów:
+    # Użyjemy metody prostokątów "forward" lub trapezów.
+    # delta_t między punktem i a i+1.
+    # W pandas diff() daje (i) - (i-1).
+
+    # diff() na czasie daje czas trwania OD poprzedniego do obecnego.
+    df_calc['delta_t'] = df_calc[time_col].diff().fillna(0)
+
+    # Dla pierwszego punktu po odcięciu, delta_t jest nieokreślone (lub 0, lub od start_time_threshold).
+    # Jeśli start_time_threshold to np. 5s, a pierwszy punkt to 5.2s, to delta_t = 0.2?
+    # Prościej: przyjmijmy, że delta_t to różnica między kolejnymi próbkami wewnątrz wyfiltrowanego zbioru.
+    # Pierwszy punkt w wyfiltrowanym zbiorze ma dawkę 0 (start akumulacji).
+
+    # Wzór wagi dla każdego punktu (używamy temperatury w punkcie, ew. średniej z poprzednim)
+    # Użyjmy temperatury w punkcie bieżącym (metoda prostokątów prawostronnych)
+    # lub średniej (metoda trapezów). Metoda trapezów jest dokładniejsza.
+
+    temp_current = df_calc[temp_col]
+    temp_prev = df_calc[temp_col].shift(1)
+
+    # Średnia temperatura w interwale
+    # Dla pierwszego punktu (gdzie prev jest NaN), średnia to po prostu current (choć i tak delta_t jest 0 lub nan)
+    temp_avg = (temp_current + temp_prev) / 2
+    temp_avg = temp_avg.fillna(temp_current)
+
+    # Waga
+    weights = 2 ** ((temp_avg - t_base) / 10.0)
+
+    # Przyrost
+    increments = weights * df_calc['delta_t']
+
+    # Skumulowana suma
+    cumulative = increments.cumsum()
+
+    # Nazwa kolumny wynikowej
+    suffix = "_Probe" if "Probe" in temp_col else ""
+    result_col = f'Thermal_Dose{suffix}'
+
+    # Przypisanie do df_calc
+    df_calc[result_col] = cumulative
+
+    # Teraz musimy to zmapować z powrotem do oryginalnego df
+    # Ponieważ filtrowaliśmy, w oryginalnym df wiersze poniżej progu powinny mieć np. 0 lub NaN.
+    # Przyjmijmy 0 dla czasów przed progiem.
+
+    # Używamy indeksu do złączenia
+    df.loc[df_calc.index, result_col] = df_calc[result_col]
+
+    # Wypełnienie NaN zerami (dla czasów przed startem)
+    df[result_col] = df[result_col].fillna(0.0)
+
+    return df

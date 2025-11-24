@@ -64,3 +64,89 @@ def test_calculate_ror_missing_cols():
     df = pd.DataFrame({'A': [1, 2, 3]})
     result = calculate_ror(df)
     assert 'Calc_RoR' not in result.columns
+
+from utils import calculate_thermal_dose
+
+# --- Testy dla calculate_thermal_dose ---
+
+def test_calculate_thermal_dose_basic():
+    # Dane: T = 100 (Waga = 1), dt = 10s
+    # T_base = 100
+    # Start = 0
+    # Waga = 2^((100-100)/10) = 2^0 = 1
+    # Dawka = 1 * 10 = 10 (na krok)
+
+    data = {
+        'Time_Seconds': [0, 10, 20],
+        'IBTS Temp': [100, 100, 100]
+    }
+    df = pd.DataFrame(data)
+
+    result = calculate_thermal_dose(df, temp_col='IBTS Temp', time_col='Time_Seconds', t_base=100, start_time_threshold=0)
+
+    col = 'Thermal_Dose'
+    assert col in result.columns
+
+    # t=0: Dawka=0 (start)
+    # t=10: dt=10, AvgTemp=100, W=1, Inc=10 -> Sum=10
+    # t=20: dt=10, AvgTemp=100, W=1, Inc=10 -> Sum=20
+
+    # Note: Implementation uses cumsum. First point (after filter) gets 0 accumulation if delta_t is 0 (first point usually delta_t=NaN or 0 depending on implementation)
+    # My implementation:
+    # df_calc['delta_t'] = df_calc[time_col].diff().fillna(0)  -> First point delta_t=0
+    # So first point Dose=0.
+    # Second point delta_t=10. Dose = 0 + 1*10 = 10.
+
+    assert result.iloc[0][col] == 0.0
+    assert result.iloc[1][col] == 10.0
+    assert result.iloc[2][col] == 20.0
+
+def test_calculate_thermal_dose_temp_increase():
+    # T rośnie: 100 -> 110
+    # T_base = 100
+    # t: 0 -> 10
+    # T_avg (0-10s) = (100+110)/2 = 105
+    # Waga = 2^((105-100)/10) = 2^0.5 = 1.414...
+    # Dose = 1.414 * 10 = 14.14
+
+    data = {
+        'Time_Seconds': [0, 10],
+        'IBTS Temp': [100, 110]
+    }
+    df = pd.DataFrame(data)
+    result = calculate_thermal_dose(df, t_base=100)
+
+    dose_1 = result.iloc[1]['Thermal_Dose']
+    expected = (2**0.5) * 10
+    assert abs(dose_1 - expected) < 0.1
+
+def test_calculate_thermal_dose_threshold():
+    # Dane: 0s, 2s, 10s, 20s
+    # Threshold = 5s
+    # Punkty brane pod uwagę: 10s, 20s.
+    # 0s i 2s odrzucone (Dose=0)
+    # Punkt 10s: Pierwszy w filtrze. delta_t=0 (bo diff z niczym wewnątrz grupy). Dose=0.
+    # Punkt 20s: delta_t=10. Temp np 100. W=1. Dose = 10.
+
+    data = {
+        'Time_Seconds': [0, 2, 10, 20],
+        'IBTS Temp': [100, 100, 100, 100]
+    }
+    df = pd.DataFrame(data)
+    result = calculate_thermal_dose(df, start_time_threshold=5)
+
+    assert result.iloc[0]['Thermal_Dose'] == 0.0
+    assert result.iloc[1]['Thermal_Dose'] == 0.0
+    assert result.iloc[2]['Thermal_Dose'] == 0.0 # Start akumulacji
+    assert result.iloc[3]['Thermal_Dose'] == 10.0
+
+def test_calculate_thermal_dose_probe():
+    data = {
+        'Time_Seconds': [0, 10],
+        'Bean Probe Temp': [100, 100]
+    }
+    df = pd.DataFrame(data)
+    result = calculate_thermal_dose(df, temp_col='Bean Probe Temp')
+
+    assert 'Thermal_Dose_Probe' in result.columns
+    assert result.iloc[1]['Thermal_Dose_Probe'] == 10.0
