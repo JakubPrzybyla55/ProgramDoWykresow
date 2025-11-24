@@ -9,7 +9,8 @@ from utils import (
     calculate_ror_sg,
     smooth_data,
     get_profiles,
-    get_roast_files
+    get_roast_files,
+    SCIPY_AVAILABLE
 )
 
 st.set_page_config(page_title="Analizator Wypału Kawy", layout="wide")
@@ -74,11 +75,18 @@ else:
     st.sidebar.header("Ustawienia Wykresów")
 
     # Wybór metody obliczania RoR
+    method_options = ['Średnia Ruchoma']
+    if SCIPY_AVAILABLE:
+        method_options.append('Savitzky-Golay')
+
     ror_method = st.sidebar.radio(
         "Metoda obliczania RoR",
-        ('Średnia Ruchoma', 'Savitzky-Golay'),
+        method_options,
         index=0
     )
+
+    if not SCIPY_AVAILABLE:
+         st.sidebar.warning("Metoda Savitzky-Golay jest niedostępna (brak pakietu scipy).")
 
     # Parametry dla metod
     if ror_method == 'Średnia Ruchoma':
@@ -90,7 +98,7 @@ else:
         calc_window = max(1, int(window_sec / 2))
         smooth_window = int(window_sec)
         sg_poly = None
-    else:
+    elif ror_method == 'Savitzky-Golay':
         sg_window = st.sidebar.number_input("Długość okna SG (musi być nieparzysta)", min_value=3, max_value=99, value=15, step=2)
         sg_poly = st.sidebar.number_input("Rząd wielomianu SG", min_value=1, max_value=5, value=2)
         if sg_window % 2 == 0:
