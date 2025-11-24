@@ -2,7 +2,14 @@ import pandas as pd
 import io
 import os
 import numpy as np
-from scipy.signal import savgol_filter
+
+# Próba importu scipy dla filtra Savitzky-Golaya
+try:
+    from scipy.signal import savgol_filter
+    SCIPY_AVAILABLE = True
+except ImportError:
+    SCIPY_AVAILABLE = False
+    savgol_filter = None
 
 def parse_time_to_seconds(time_str):
     """Konwertuje ciąg czasu 'mm:ss' na sekundy (float)."""
@@ -183,6 +190,12 @@ def calculate_ror_sg(df, temp_col='IBTS Temp', time_col='Time_Seconds', window_l
     """
     Oblicza RoR przy użyciu filtra Savitzky'ego-Golaya (wygładzanie + pochodna).
     """
+    if not SCIPY_AVAILABLE:
+        # Jeśli scipy nie jest dostępne, zwracamy 0 i logujemy (lub można rzucić błąd)
+        print("Scipy nie jest zainstalowane. Metoda Savitzky-Golay niedostępna.")
+        df['Calc_RoR_SG'] = 0
+        return df
+
     if df.empty or temp_col not in df.columns:
         return df
 
