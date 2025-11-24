@@ -99,14 +99,12 @@ def parse_roasttime_csv(file):
                 except IndexError:
                     pass
 
-        # Parsowanie Drop (Koniec) - jeśli dostępne
-        # Można dodać parsowanie innych zdarzeń tutaj w przyszłości
-
     if timeline_index == -1:
         raise ValueError("Nie można znaleźć nagłówka 'Timeline' w pliku CSV.")
 
     # --- Parsowanie danych osi czasu ---
-    csv_data = "\n".join(lines[timeline_index:])
+    # Pomijamy linię "Timeline" i bierzemy następną jako nagłówek
+    csv_data = "\n".join(lines[timeline_index+1:])
     df = pd.read_csv(io.StringIO(csv_data))
 
     df.columns = df.columns.str.strip()
@@ -122,10 +120,16 @@ def parse_roasttime_csv(file):
     if 'Time' in df.columns:
         df['Time_Seconds'] = df['Time'].apply(parse_time_to_seconds)
 
-    cols_to_numeric = ['IBTS Temp', 'IBTS ROR', 'Bean Probe Temp', 'Bean Probe ROR']
+    cols_to_numeric = ['IBTS Temp', 'IBTS ROR', 'Bean Probe Temp', 'Bean Probe ROR', 'Fan', 'Power']
     for col in cols_to_numeric:
         if col in df.columns:
             df[col] = pd.to_numeric(df[col], errors='coerce')
+
+    # --- Dodanie punktu Drop (ostatni punkt) ---
+    if not df.empty:
+        last_row = df.iloc[-1]
+        if 'Time_Seconds' in last_row:
+             milestones['Drop'] = last_row['Time_Seconds']
 
     return df, milestones
 
@@ -152,11 +156,16 @@ def parse_profile_csv(file):
     elif 'Time' in df.columns:
         df['Time_Seconds'] = df['Time'].apply(parse_time_to_seconds)
     else:
+        # Fallback na 3 kolumny
         if len(df.columns) == 3:
             df.columns = ['Faza', 'Czas', 'Temperatura']
             df['Time_Seconds'] = df['Czas'].apply(parse_time_to_seconds)
         else:
-             raise ValueError("Plik CSV profilu musi zawierać kolumnę 'Czas' lub 'Time'.")
+            # Sprawdźmy czy to stary format bez nawiewu/mocy
+            # Jeśli nie ma Czas/Time, ale są inne kolumny, może być problem.
+            # Ale jeśli jest Czas, to OK.
+            if 'Czas' not in df.columns and 'Time' not in df.columns:
+                 raise ValueError("Plik CSV profilu musi zawierać kolumnę 'Czas' lub 'Time'.")
 
     return df
 
@@ -182,7 +191,17 @@ def calculate_ror(df, temp_col='IBTS Temp', time_col='Time_Seconds', window_seco
         if periods < 1:
             periods = 1
 
-    df['Calc_RoR'] = df[temp_col].diff(periods=periods) / df[time_col].diff(periods=periods) * 60
+    ror_col_name = 'Calc_RoR'
+    # Jeśli liczymy dla Probe, nazwijmy inaczej? Nie, funkcja zwraca df z jedną kolumną ROR.
+    # Warto byłoby sparametryzować nazwę kolumny wynikowej, ale na razie użyjmy Calc_RoR
+    # Jeśli temp_col to Probe, wynik też powinien być distinct.
+
+    # Modyfikacja: Zwracajmy serię lub dodawajmy kolumnę z sufiksem
+    suffix = ""
+    if "Probe" in temp_col:
+        suffix = "_Probe"
+
+    df[f'Calc_RoR{suffix}'] = df[temp_col].diff(periods=periods) / df[time_col].diff(periods=periods) * 60
 
     return df
 
@@ -190,10 +209,16 @@ def calculate_ror_sg(df, temp_col='IBTS Temp', time_col='Time_Seconds', window_l
     """
     Oblicza RoR przy użyciu filtra Savitzky'ego-Golaya (wygładzanie + pochodna).
     """
+
+    suffix = ""
+    if "Probe" in temp_col:
+        suffix = "_Probe"
+    col_name = f'Calc_RoR_SG{suffix}'
+
     if not SCIPY_AVAILABLE:
         # Jeśli scipy nie jest dostępne, zwracamy 0 i logujemy (lub można rzucić błąd)
         print("Scipy nie jest zainstalowane. Metoda Savitzky-Golay niedostępna.")
-        df['Calc_RoR_SG'] = 0
+        df[col_name] = 0
         return df
 
     if df.empty or temp_col not in df.columns:
@@ -208,7 +233,7 @@ def calculate_ror_sg(df, temp_col='IBTS Temp', time_col='Time_Seconds', window_l
         window_length = len(df) if len(df) % 2 != 0 else len(df) - 1
         if window_length < polyorder + 2:
              # Za mało danych na sensowne obliczenia
-             df['Calc_RoR_SG'] = 0
+             df[col_name] = 0
              return df
 
     # Używamy pochodnej (deriv=1) i skalujemy (delta)
@@ -222,17 +247,20 @@ def calculate_ror_sg(df, temp_col='IBTS Temp', time_col='Time_Seconds', window_l
 
     try:
         # Obliczamy pierwszą pochodną (temp/próbkę)
-        deriv = savgol_filter(df[temp_col], window_length=window_length, polyorder=polyorder, deriv=1)
+        # Nalezy usunac NaNy przed savgol
+        series = df[temp_col].interpolate(method='linear').fillna(method='bfill').fillna(method='ffill')
+
+        deriv = savgol_filter(series, window_length=window_length, polyorder=polyorder, deriv=1)
 
         # Konwersja: (Stopnie / Próbka) * (1 Próbka / X sekund) * (60 sekund / 1 minuta)
         # = Stopnie / X sekund * 60
         # = Stopnie/Sekunda * 60 = Stopnie/Minuta
 
         ror = (deriv / avg_time_step) * 60
-        df['Calc_RoR_SG'] = ror
+        df[col_name] = ror
     except Exception as e:
         print(f"Błąd obliczania SG: {e}")
-        df['Calc_RoR_SG'] = 0
+        df[col_name] = 0
 
     return df
 
