@@ -119,6 +119,9 @@ def parse_roasttime_csv(file):
 
     if 'Time' in df.columns:
         df['Time_Seconds'] = df['Time'].apply(parse_time_to_seconds)
+    else:
+        # Jeśli po wszystkich próbach nie ma kolumny Time, rzucamy błąd
+        raise ValueError("Nie znaleziono kolumny 'Time' w pliku CSV.")
 
     cols_to_numeric = ['IBTS Temp', 'IBTS ROR', 'Bean Probe Temp', 'Bean Probe ROR', 'Fan', 'Power']
     for col in cols_to_numeric:
