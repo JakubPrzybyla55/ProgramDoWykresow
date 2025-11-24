@@ -132,8 +132,15 @@ def parse_roasttime_csv(file):
 
     df.columns = df.columns.str.strip()
 
-    required_columns = ['Time', 'IBTS Temp', 'IBTS ROR']
-    for col in required_columns:
+    # Rozszerzona lista kolumn do wyszukiwania (również opcjonalne)
+    # Kolejność: Najpierw szukamy wymaganych, potem opcjonalnych
+    columns_to_map = [
+        'Time', 'IBTS Temp', 'IBTS ROR',
+        'Bean Probe Temp', 'Bean Probe ROR',
+        'Fan', 'Power'
+    ]
+
+    for col in columns_to_map:
         if col not in df.columns:
             for actual_col in df.columns:
                 if col.lower() in actual_col.lower():

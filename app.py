@@ -619,14 +619,22 @@ else:
 
             key_events = {k: v for k, v in actual_milestones.items()}
 
-            # Find TP
+            # Find TP (Turning Point)
+            # Preferujemy Bean Probe Temp jeśli dostępny, bo jest dokładniejszy dla TP
             if 'Turning Point' not in key_events:
                  try:
                     early_df = actual_df[actual_df['Time_Seconds'] < 180]
                     if not early_df.empty:
-                        min_idx = early_df['IBTS Temp'].idxmin()
-                        tp_time = early_df.loc[min_idx, 'Time_Seconds']
-                        key_events['Turning Point'] = tp_time
+                        # Domyślnie IBTS
+                        temp_col = 'IBTS Temp'
+                        # Jeśli mamy Probe, używamy Probe
+                        if 'Bean Probe Temp' in actual_df.columns:
+                            temp_col = 'Bean Probe Temp'
+
+                        if temp_col in early_df.columns:
+                            min_idx = early_df[temp_col].idxmin()
+                            tp_time = early_df.loc[min_idx, 'Time_Seconds']
+                            key_events['Turning Point'] = tp_time
                  except:
                     pass
 
