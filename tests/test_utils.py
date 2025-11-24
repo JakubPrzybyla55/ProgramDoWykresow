@@ -24,14 +24,15 @@ def test_parse_time_invalid():
 def test_calculate_ror_basic():
     # Przygotowanie prostych danych: 3 punkty co 60 sekund, wzrost o 10 stopni
     # RoR = (10 stopni / 60s) * 60s = 10 stopni/min
+    # Now logic: Point to point.
     data = {
         'Time_Seconds': [0, 60, 120],
         'IBTS Temp': [100, 110, 120]
     }
     df = pd.DataFrame(data)
 
-    # window_seconds=60 (powinno wziąć różnicę 1 wiersza bo diff=60)
-    result = calculate_ror(df, temp_col='IBTS Temp', time_col='Time_Seconds', window_seconds=60)
+    # Removed window_seconds
+    result = calculate_ror(df, temp_col='IBTS Temp', time_col='Time_Seconds')
 
     assert 'Calc_RoR' in result.columns
     # Pierwszy wiersz ma NaN (bo shift)
@@ -39,6 +40,20 @@ def test_calculate_ror_basic():
     # Kolejne powinny mieć 10.0
     assert result.iloc[1]['Calc_RoR'] == 10.0
     assert result.iloc[2]['Calc_RoR'] == 10.0
+
+def test_calculate_ror_irregular():
+    # Test irregular intervals
+    # 0->2s (dt=2), T: 100->102 (dT=2). RoR = 2/2*60 = 60
+    # 2->5s (dt=3), T: 102->108 (dT=6). RoR = 6/3*60 = 120
+    data = {
+        'Time_Seconds': [0, 2, 5],
+        'IBTS Temp': [100, 102, 108]
+    }
+    df = pd.DataFrame(data)
+    result = calculate_ror(df, temp_col='IBTS Temp', time_col='Time_Seconds')
+
+    assert result.iloc[1]['Calc_RoR'] == 60.0
+    assert result.iloc[2]['Calc_RoR'] == 120.0
 
 def test_calculate_ror_empty():
     df = pd.DataFrame()

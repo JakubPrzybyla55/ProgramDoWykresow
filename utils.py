@@ -203,43 +203,34 @@ def parse_profile_csv(file):
 
     return df
 
-def calculate_ror(df, temp_col='IBTS Temp', time_col='Time_Seconds', window_seconds=10):
+def calculate_ror(df, temp_col='IBTS Temp', time_col='Time_Seconds'):
     """
-    Oblicza RoR (Szybkość Wzrostu) metodą prostej różnicy (pochodna dyskretna).
+    Oblicza RoR (Szybkość Wzrostu) metodą prostej różnicy (pochodna dyskretna) punkt-do-punktu.
+    Formuła: (Temp2 - Temp1) * 60 / (Time2 - Time1)
     """
     if df.empty or time_col not in df.columns or temp_col not in df.columns:
         return df
 
     df = df.sort_values(by=time_col).copy()
 
-    # Obliczamy interwał próbkowania (zakładając w miarę stały)
-    # Jeśli dane są nierówne, lepiej użyć shift opartego na indeksie, który w przybliżeniu odpowiada sekundom
-    # Tutaj użyjemy shiftu o liczbę wierszy odpowiadającą mniej więcej oknu czasowemu
-    # Najpierw spróbujmy znaleźć ile wierszy to 'window_seconds'
-
-    avg_diff = df[time_col].diff().mean()
-    if pd.isna(avg_diff) or avg_diff == 0:
-        periods = 1
-    else:
-        periods = int(round(window_seconds / avg_diff))
-        if periods < 1:
-            periods = 1
-
-    ror_col_name = 'Calc_RoR'
-    # Jeśli liczymy dla Probe, nazwijmy inaczej? Nie, funkcja zwraca df z jedną kolumną ROR.
-    # Warto byłoby sparametryzować nazwę kolumny wynikowej, ale na razie użyjmy Calc_RoR
-    # Jeśli temp_col to Probe, wynik też powinien być distinct.
-
-    # Modyfikacja: Zwracajmy serię lub dodawajmy kolumnę z sufiksem
     suffix = ""
     if "Probe" in temp_col:
         suffix = "_Probe"
 
-    df[f'Calc_RoR{suffix}'] = df[temp_col].diff(periods=periods) / df[time_col].diff(periods=periods) * 60
+    # Obliczamy różnice
+    delta_temp = df[temp_col].diff()
+    delta_time = df[time_col].diff()
+
+    # RoR = (dTemp / dTime) * 60
+    # Obsługa dzielenia przez zero (jeśli delta_time = 0, np. duplikaty czasu)
+    # Zamieniamy 0 na NaN, żeby wynik był NaN, a nie Inf (co psuje wykresy)
+    delta_time = delta_time.replace(0, np.nan)
+
+    df[f'Calc_RoR{suffix}'] = (delta_temp / delta_time) * 60
 
     return df
 
-def calculate_ror_sg(df, temp_col='IBTS Temp', time_col='Time_Seconds', window_length=15, polyorder=2):
+def calculate_ror_sg(df, temp_col='IBTS Temp', time_col='Time_Seconds', window_length=15, polyorder=2, deriv=1):
     """
     Oblicza RoR przy użyciu filtra Savitzky'ego-Golaya (wygładzanie + pochodna).
     """
@@ -280,17 +271,52 @@ def calculate_ror_sg(df, temp_col='IBTS Temp', time_col='Time_Seconds', window_l
         avg_time_step = 1.0 # fallback
 
     try:
-        # Obliczamy pierwszą pochodną (temp/próbkę)
+        # Obliczamy pochodną rzędu 'deriv' (temp/próbkę^deriv)
         # Nalezy usunac NaNy przed savgol
         series = df[temp_col].interpolate(method='linear').fillna(method='bfill').fillna(method='ffill')
 
-        deriv = savgol_filter(series, window_length=window_length, polyorder=polyorder, deriv=1)
+        val_sg = savgol_filter(series, window_length=window_length, polyorder=polyorder, deriv=deriv)
 
-        # Konwersja: (Stopnie / Próbka) * (1 Próbka / X sekund) * (60 sekund / 1 minuta)
-        # = Stopnie / X sekund * 60
-        # = Stopnie/Sekunda * 60 = Stopnie/Minuta
+        # Konwersja jednostek
+        # Dla deriv=1: (stopnie/próbkę) / (sekund/próbkę) * 60 = stopnie/min
+        # Dla deriv=2: (stopnie/próbkę^2) / (sekund/próbkę)^2 * 60?
+        # Zwykle Acceleration to stopnie/min^2.
+        # Jeśli to ma być RoR (stopnie/min), to deriv=1.
+        # Jeśli user chce deriv=2, to pewnie chce Acceleration (stopnie/min^2) lub krzywiznę.
+        # Skalowanie: val_sg / (avg_time_step ** deriv)
+        # Jeśli wynik ma być "na minutę" (lub "na minutę kwadrat"):
+        # Unit correction: * 60 (dla RoR) lub * 3600 (dla Accel)?
+        # Zostawmy * 60 dla kompatybilności z wykresem RoR, ale dla deriv>1 jednostki są inne.
+        # User prosił o "możliwość zmiany deriv", więc dostarczamy surowy wynik przekształcony na jednostkę czasu.
 
-        ror = (deriv / avg_time_step) * 60
+        scale_factor = 60 if deriv == 1 else 1 # Dla deriv!=1 nie skalujemy automatycznie na minuty w ten sam sposób, chyba że user tego oczekuje.
+        # Ale 'calculate_ror' sugeruje Rate.
+        # Przyjmijmy konsekwentnie skalowanie czasu:
+        # Wynik surowy to d^n T / dn Samples.
+        # d Samples = dt Seconds.
+        # d^n T / dt^n Seconds^n.
+        # Żeby mieć "na minutę^n", mnożymy przez 60^n?
+        # Zostawmy proste skalowanie * 60 dla RoR (deriv=1).
+        # Dla innych zostawmy tak jak jest w logice (dzielenie przez krok czasu).
+
+        # Jeśli deriv=1:
+        # (val / dt) * 60
+
+        if deriv == 1:
+            ror = (val_sg / avg_time_step) * 60
+        else:
+            # Dla wyższych pochodnych, np. 2:
+            # val / (dt^2)
+            # Wynik w jednostkach T/s^2.
+            ror = val_sg / (avg_time_step ** deriv)
+
+            # Opcjonalnie konwersja na minuty?
+            # User pewnie chce poeksperymentować.
+            # Zostawmy w jednostkach sekundy w mianowniku, chyba że to RoR.
+            # Ale skoro to idzie na wykres RoR, wartości będą rzędu 0.00x jeśli to s^2.
+            # Zróbmy * 60^deriv.
+            ror = ror * (60 ** deriv)
+
         df[col_name] = ror
     except Exception as e:
         print(f"Błąd obliczania SG: {e}")
@@ -301,7 +327,10 @@ def calculate_ror_sg(df, temp_col='IBTS Temp', time_col='Time_Seconds', window_l
 def smooth_data(series, window=30):
     """
     Wygładza dane używając średniej ruchomej.
+    Window to liczba próbek.
     """
+    if window < 1:
+        window = 1
     return series.rolling(window=window, min_periods=1, center=True).mean()
 
 # --- Funkcje zarządzania plikami ---

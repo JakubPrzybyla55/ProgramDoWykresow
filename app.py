@@ -102,16 +102,17 @@ else:
 
     ibts_params = {}
     if ror_method_ibts == 'Średnia Ruchoma':
-        window_sec = st.sidebar.number_input("Okno (sek) - IBTS", min_value=1, max_value=60, value=15, key="ibts_ma_win")
-        ibts_params['calc_window'] = max(1, int(window_sec / 2))
-        ibts_params['smooth_window'] = int(window_sec)
+        window_sec = st.sidebar.number_input("Okno Wygładzania (sek) - IBTS", min_value=1, max_value=60, value=15, key="ibts_ma_win")
+        ibts_params['window_sec'] = window_sec
     elif ror_method_ibts == 'Savitzky-Golay':
         sg_window = st.sidebar.number_input("Okno SG - IBTS", min_value=3, max_value=99, value=15, step=2, key="ibts_sg_win")
         sg_poly = st.sidebar.number_input("Rząd wielomianu - IBTS", min_value=1, max_value=5, value=2, key="ibts_sg_poly")
+        sg_deriv = st.sidebar.number_input("Rząd pochodnej - IBTS", min_value=1, max_value=3, value=1, key="ibts_sg_deriv")
         if sg_window % 2 == 0:
             sg_window += 1
         ibts_params['sg_window'] = sg_window
         ibts_params['sg_poly'] = sg_poly
+        ibts_params['sg_deriv'] = sg_deriv
 
     # --- Ustawienia Sondy (Probe) ---
     st.sidebar.subheader("Sonda")
@@ -124,16 +125,17 @@ else:
 
     probe_params = {}
     if ror_method_probe == 'Średnia Ruchoma':
-        window_sec = st.sidebar.number_input("Okno (sek) - Sonda", min_value=1, max_value=60, value=15, key="probe_ma_win")
-        probe_params['calc_window'] = max(1, int(window_sec / 2))
-        probe_params['smooth_window'] = int(window_sec)
+        window_sec = st.sidebar.number_input("Okno Wygładzania (sek) - Sonda", min_value=1, max_value=60, value=15, key="probe_ma_win")
+        probe_params['window_sec'] = window_sec
     elif ror_method_probe == 'Savitzky-Golay':
         sg_window = st.sidebar.number_input("Okno SG - Sonda", min_value=3, max_value=99, value=15, step=2, key="probe_sg_win")
         sg_poly = st.sidebar.number_input("Rząd wielomianu - Sonda", min_value=1, max_value=5, value=2, key="probe_sg_poly")
+        sg_deriv = st.sidebar.number_input("Rząd pochodnej - Sonda", min_value=1, max_value=3, value=1, key="probe_sg_deriv")
         if sg_window % 2 == 0:
             sg_window += 1
         probe_params['sg_window'] = sg_window
         probe_params['sg_poly'] = sg_poly
+        probe_params['sg_deriv'] = sg_deriv
 
     # --- Limity Osi ---
     st.sidebar.markdown("---")
@@ -159,15 +161,29 @@ else:
         try:
             actual_df, actual_milestones = parse_roasttime_csv(selected_roast_path)
 
+            # Oblicz średni interwał próbkowania, aby przeliczyć sekundy na liczbę próbek dla wygładzania
+            avg_interval = 1.0
+            if not actual_df.empty and 'Time_Seconds' in actual_df.columns:
+                 diffs = actual_df['Time_Seconds'].diff()
+                 avg_interval = diffs.median()
+                 if pd.isna(avg_interval) or avg_interval <= 0:
+                     avg_interval = 1.0
+
             # --- Obliczenia RoR IBTS ---
             if 'IBTS Temp' in actual_df.columns:
                 if ror_method_ibts == 'Średnia Ruchoma':
-                    actual_df = calculate_ror(actual_df, temp_col='IBTS Temp', window_seconds=ibts_params['calc_window'])
-                    base_ror_col = 'Calc_RoR' # calculate_ror domyślnie tak nazywa dla IBTS (bez suffixu Probe)
+                    # Calculate raw point-to-point RoR
+                    actual_df = calculate_ror(actual_df, temp_col='IBTS Temp', time_col='Time_Seconds')
+                    base_ror_col = 'Calc_RoR'
                     if base_ror_col in actual_df.columns:
-                        actual_df['RoR_Display'] = smooth_data(actual_df[base_ror_col], window=ibts_params['smooth_window'])
+                        # Convert window seconds to samples
+                        smooth_samples = max(1, int(ibts_params['window_sec'] / avg_interval))
+                        actual_df['RoR_Display'] = smooth_data(actual_df[base_ror_col], window=smooth_samples)
                 else:
-                    actual_df = calculate_ror_sg(actual_df, temp_col='IBTS Temp', window_length=ibts_params['sg_window'], polyorder=ibts_params['sg_poly'])
+                    actual_df = calculate_ror_sg(actual_df, temp_col='IBTS Temp',
+                                                 window_length=ibts_params['sg_window'],
+                                                 polyorder=ibts_params['sg_poly'],
+                                                 deriv=ibts_params['sg_deriv'])
                     base_ror_col = 'Calc_RoR_SG'
                     if base_ror_col in actual_df.columns:
                         actual_df['RoR_Display'] = actual_df[base_ror_col]
@@ -175,13 +191,16 @@ else:
             # --- Obliczenia RoR Probe ---
             if 'Bean Probe Temp' in actual_df.columns:
                 if ror_method_probe == 'Średnia Ruchoma':
-                    actual_df = calculate_ror(actual_df, temp_col='Bean Probe Temp', window_seconds=probe_params['calc_window'])
-                    # calculate_ror dodaje suffix _Probe jeśli "Probe" w nazwie kolumny
+                    actual_df = calculate_ror(actual_df, temp_col='Bean Probe Temp', time_col='Time_Seconds')
                     base_ror_col = 'Calc_RoR_Probe'
                     if base_ror_col in actual_df.columns:
-                        actual_df['RoR_Display_Probe'] = smooth_data(actual_df[base_ror_col], window=probe_params['smooth_window'])
+                        smooth_samples = max(1, int(probe_params['window_sec'] / avg_interval))
+                        actual_df['RoR_Display_Probe'] = smooth_data(actual_df[base_ror_col], window=smooth_samples)
                 else:
-                    actual_df = calculate_ror_sg(actual_df, temp_col='Bean Probe Temp', window_length=probe_params['sg_window'], polyorder=probe_params['sg_poly'])
+                    actual_df = calculate_ror_sg(actual_df, temp_col='Bean Probe Temp',
+                                                 window_length=probe_params['sg_window'],
+                                                 polyorder=probe_params['sg_poly'],
+                                                 deriv=probe_params['sg_deriv'])
                     base_ror_col = 'Calc_RoR_SG_Probe'
                     if base_ror_col in actual_df.columns:
                         actual_df['RoR_Display_Probe'] = actual_df[base_ror_col]
@@ -257,7 +276,7 @@ else:
                 ), row=row_idx, col=1)
 
         # Plan (Markers)
-        if show_plan: # Ustawienia planu też zależne od 'Pokaż Plan'? Raczej tak.
+        if show_plan:
             if 'Nawiew' in plan_df.columns:
                  fig_main.add_trace(go.Scatter(
                     x=plan_df['Time_Seconds'], y=plan_df['Nawiew'],
@@ -377,7 +396,6 @@ else:
         legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1)
     )
     fig_temp.update_yaxes(title_text="Temperatura (°C)", row=1, col=1)
-    # Zmiana skali dla ustawień
     fig_temp.update_yaxes(title_text="Wartość", range=[settings_y_min, settings_y_max], dtick=1, row=2, col=1)
     fig_temp.update_xaxes(title_text="Czas (sekundy)", row=2, col=1)
 
@@ -424,7 +442,6 @@ else:
         # Actual Milestones
         for name, time_sec in actual_milestones.items():
              # Szukamy RoR w tym czasie
-             # Używamy IBTS RoR jako reference dla milestona? Tak.
              if 'RoR_Display' in actual_df.columns:
                 row_actual = actual_df.iloc[(actual_df['Time_Seconds'] - time_sec).abs().argsort()[:1]]
                 if not row_actual.empty:
