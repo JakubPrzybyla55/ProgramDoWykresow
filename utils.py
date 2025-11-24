@@ -105,7 +105,12 @@ def parse_roasttime_csv(file):
     # --- Parsowanie danych osi czasu ---
     # Pomijamy linię "Timeline" i bierzemy następną jako nagłówek
     csv_data = "\n".join(lines[timeline_index+1:])
-    df = pd.read_csv(io.StringIO(csv_data))
+    try:
+        # Próba autodetekcji separatora
+        df = pd.read_csv(io.StringIO(csv_data), sep=None, engine='python')
+    except:
+        # Fallback na domyślny
+        df = pd.read_csv(io.StringIO(csv_data))
 
     df.columns = df.columns.str.strip()
 
@@ -121,7 +126,8 @@ def parse_roasttime_csv(file):
         df['Time_Seconds'] = df['Time'].apply(parse_time_to_seconds)
     else:
         # Jeśli po wszystkich próbach nie ma kolumny Time, rzucamy błąd
-        raise ValueError("Nie znaleziono kolumny 'Time' w pliku CSV.")
+        cols = ", ".join(df.columns.tolist())
+        raise ValueError(f"Nie znaleziono kolumny 'Time' w pliku CSV. Dostępne kolumny: {cols}")
 
     cols_to_numeric = ['IBTS Temp', 'IBTS ROR', 'Bean Probe Temp', 'Bean Probe ROR', 'Fan', 'Power']
     for col in cols_to_numeric:
