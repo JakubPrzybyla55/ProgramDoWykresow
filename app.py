@@ -132,11 +132,51 @@ else:
         except Exception as e:
             st.error(f"Błąd wczytywania pliku wypału: {e}")
 
+    # Funkcja pomocnicza do rzutowania
+    def add_projection(fig, x_val, y_val, color, is_time_x=True, show_y=True):
+        # Pionowa linia (rzutowanie na oś X)
+        fig.add_vline(x=x_val, line_width=1, line_dash="dash", line_color=color, opacity=0.4)
+
+        # Etykieta na osi X
+        if is_time_x:
+            x_text = f"{int(x_val//60)}:{int(x_val%60):02d}"
+        else:
+            x_text = f"{x_val:.1f}"
+
+        fig.add_annotation(
+            x=x_val, y=0,
+            xref="x", yref="paper",
+            text=x_text,
+            showarrow=False,
+            font=dict(size=10, color=color),
+            yshift=-25,
+            bgcolor="rgba(0,0,0,0.5)"
+        )
+
+        if show_y and y_val is not None:
+            # Pozioma linia (rzutowanie na oś Y)
+            fig.add_hline(y=y_val, line_width=1, line_dash="dash", line_color=color, opacity=0.4)
+
+            # Etykieta na osi Y
+            fig.add_annotation(
+                x=0, y=y_val,
+                xref="paper", yref="y",
+                text=f"{y_val:.1f}",
+                showarrow=False,
+                font=dict(size=10, color=color),
+                xshift=-40,
+                xanchor="right",
+                bgcolor="rgba(0,0,0,0.5)"
+            )
+
     # Wykres 1: Temperatura & Profil
     fig_temp = go.Figure()
 
     # Styl ciemny
-    fig_temp.update_layout(template="plotly_dark")
+    fig_temp.update_layout(
+        template="plotly_dark",
+        margin=dict(l=70, b=50) # Zwiększamy marginesy na etykiety
+    )
 
     # Punkty Planu
     fig_temp.add_trace(go.Scatter(
@@ -149,9 +189,9 @@ else:
         marker=dict(size=12, color='cyan', symbol='x')
     ))
 
-    # Linie pionowe dla Planu
+    # Linie rzutowania dla Planu
     for _, row in plan_df.iterrows():
-         fig_temp.add_vline(x=row['Time_Seconds'], line_width=1, line_dash="dash", line_color="cyan", opacity=0.3)
+         add_projection(fig_temp, row['Time_Seconds'], row['Temperatura'], 'cyan')
 
     if not actual_df.empty:
         # Wykres Rzeczywistej Temperatury
@@ -175,8 +215,8 @@ else:
                     name=f'Rzeczywiste {name}',
                     marker=dict(size=10, color='red', symbol='circle-open')
                 ))
-                # Linie pionowe dla Rzeczywistych zdarzeń
-                fig_temp.add_vline(x=time_sec, line_width=1, line_dash="dot", line_color="red", opacity=0.5)
+                # Projekcje dla Rzeczywistych zdarzeń
+                add_projection(fig_temp, time_sec, temp_val, 'red')
 
     fig_temp.update_layout(
         title=f"Profil Temperatury: {selected_profile}",
@@ -201,12 +241,18 @@ else:
             line=dict(color='magenta', width=2)
         ))
 
-        # Linie pionowe dla zdarzeń (Plan i Rzeczywiste)
+        # Projekcje dla Planu (tylko czas)
         for _, row in plan_df.iterrows():
-             fig_ror.add_vline(x=row['Time_Seconds'], line_width=1, line_dash="dash", line_color="cyan", opacity=0.3)
+             add_projection(fig_ror, row['Time_Seconds'], None, 'cyan', show_y=False)
 
+        # Projekcje dla Rzeczywistych zdarzeń (czas i RoR)
         for name, time_sec in actual_milestones.items():
-             fig_ror.add_vline(x=time_sec, line_width=1, line_dash="dot", line_color="red", opacity=0.5)
+             row_actual = actual_df.iloc[(actual_df['Time_Seconds'] - time_sec).abs().argsort()[:1]]
+             if not row_actual.empty:
+                 ror_val = row_actual['RoR_Display'].values[0]
+                 add_projection(fig_ror, time_sec, ror_val, 'red')
+             else:
+                 add_projection(fig_ror, time_sec, None, 'red', show_y=False)
 
         fig_ror.update_layout(
             title="Szybkość Wzrostu (RoR)",
@@ -214,7 +260,8 @@ else:
             yaxis_title="RoR (°C/min)",
             yaxis_range=[ror_y_min, ror_y_max],
             hovermode="x unified",
-             legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1)
+            legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
+            margin=dict(l=70, b=50)
         )
         st.plotly_chart(fig_ror, use_container_width=True)
 
