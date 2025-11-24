@@ -8,6 +8,7 @@ from utils import (
     parse_profile_csv,
     calculate_ror,
     calculate_ror_sg,
+    calculate_thermal_dose,
     smooth_data,
     get_profiles,
     get_roast_files,
@@ -137,6 +138,12 @@ else:
         probe_params['sg_poly'] = sg_poly
         probe_params['sg_deriv'] = sg_deriv
 
+    # --- Ustawienia Dawki Termicznej ---
+    st.sidebar.markdown("---")
+    st.sidebar.header("Ustawienia Dawki Termicznej")
+    dose_t_base = st.sidebar.number_input("Temperatura Bazowa (°C)", value=100.0, step=1.0)
+    dose_start_time = st.sidebar.number_input("Start Obliczeń (sek)", value=5.0, step=1.0)
+
     # --- Limity Osi ---
     st.sidebar.markdown("---")
     st.sidebar.header("Ustawienia Wykresów")
@@ -204,6 +211,17 @@ else:
                     base_ror_col = 'Calc_RoR_SG_Probe'
                     if base_ror_col in actual_df.columns:
                         actual_df['RoR_Display_Probe'] = actual_df[base_ror_col]
+
+            # --- Obliczenia Dawki Termicznej ---
+            if 'IBTS Temp' in actual_df.columns:
+                actual_df = calculate_thermal_dose(actual_df, temp_col='IBTS Temp',
+                                                   time_col='Time_Seconds', t_base=dose_t_base,
+                                                   start_time_threshold=dose_start_time)
+
+            if 'Bean Probe Temp' in actual_df.columns:
+                actual_df = calculate_thermal_dose(actual_df, temp_col='Bean Probe Temp',
+                                                   time_col='Time_Seconds', t_base=dose_t_base,
+                                                   start_time_threshold=dose_start_time)
 
         except Exception as e:
             st.error(f"Błąd wczytywania pliku wypału: {e}")
@@ -481,6 +499,57 @@ else:
         fig_ror.update_xaxes(title_text="Czas (sekundy)", row=2, col=1)
 
         st.plotly_chart(fig_ror, use_container_width=True)
+
+        # ==========================
+        # FIGURE 3: THERMAL DOSE
+        # ==========================
+        if 'Thermal_Dose' in actual_df.columns or 'Thermal_Dose_Probe' in actual_df.columns:
+            fig_dose = make_subplots(specs=[[{"secondary_y": True}]])
+            fig_dose.update_layout(title_text="Skumulowana Dawka Termiczna")
+
+            # Lewa oś: Temperatura
+            if show_ibts and 'IBTS Temp' in actual_df.columns:
+                fig_dose.add_trace(go.Scatter(
+                    x=actual_df['Time_Seconds'], y=actual_df['IBTS Temp'],
+                    name="Temp IBTS", line=dict(color='orange', width=1, dash='dash')
+                ), secondary_y=False)
+
+            if show_probe and 'Bean Probe Temp' in actual_df.columns:
+                fig_dose.add_trace(go.Scatter(
+                    x=actual_df['Time_Seconds'], y=actual_df['Bean Probe Temp'],
+                    name="Temp Sonda", line=dict(color='lightgreen', width=1, dash='dot')
+                ), secondary_y=False)
+
+            # Prawa oś: Dawka
+            if show_ibts and 'Thermal_Dose' in actual_df.columns:
+                 fig_dose.add_trace(go.Scatter(
+                    x=actual_df['Time_Seconds'], y=actual_df['Thermal_Dose'],
+                    name="Dawka IBTS", line=dict(color='red', width=3),
+                    fill='tozeroy', fillcolor='rgba(255, 0, 0, 0.1)'
+                ), secondary_y=True)
+
+            if show_probe and 'Thermal_Dose_Probe' in actual_df.columns:
+                 fig_dose.add_trace(go.Scatter(
+                    x=actual_df['Time_Seconds'], y=actual_df['Thermal_Dose_Probe'],
+                    name="Dawka Sonda", line=dict(color='green', width=3, dash='dash'),
+                ), secondary_y=True)
+
+            fig_dose.update_yaxes(title_text="Temperatura (°C)", secondary_y=False)
+            fig_dose.update_yaxes(title_text="Dawka", secondary_y=True)
+            fig_dose.update_xaxes(title_text="Czas (sekundy)")
+            fig_dose.update_layout(template="plotly_dark", height=500, hovermode="x unified")
+
+            st.plotly_chart(fig_dose, use_container_width=True)
+
+            # Metrics
+            st.subheader("Podsumowanie Dawki Termicznej")
+            m_col1, m_col2 = st.columns(2)
+            if 'Thermal_Dose' in actual_df.columns:
+                final_dose = actual_df['Thermal_Dose'].iloc[-1]
+                m_col1.metric("Całkowita Dawka (IBTS)", f"{final_dose:,.0f}")
+            if 'Thermal_Dose_Probe' in actual_df.columns:
+                final_dose_probe = actual_df['Thermal_Dose_Probe'].iloc[-1]
+                m_col2.metric("Całkowita Dawka (Sonda)", f"{final_dose_probe:,.0f}")
 
         # --- Analiza (Tables) ---
         st.header("Analiza")
