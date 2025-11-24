@@ -103,8 +103,26 @@ def parse_roasttime_csv(file):
         raise ValueError("Nie można znaleźć nagłówka 'Timeline' w pliku CSV.")
 
     # --- Parsowanie danych osi czasu ---
-    # Pomijamy linię "Timeline" i bierzemy następną jako nagłówek
-    csv_data = "\n".join(lines[timeline_index+1:])
+    # Inteligentne szukanie nagłówka. Czasami jest w tej samej linii co "Timeline", czasami niżej.
+    header_index = timeline_index + 1 # Domyślnie: linia po Timeline
+
+    # Szukamy wiersza nagłówkowego w kilku kolejnych liniach
+    # Szukamy słów kluczowych typowych dla nagłówków
+    header_keywords = ['temp', 'time', 'czas', 'ibts', 'probe', 'ror']
+
+    for j in range(timeline_index, min(timeline_index + 5, len(lines))):
+        line = lines[j]
+        line_lower = line.lower()
+        # Musi zawierać separator ORAZ słowo kluczowe, aby nie pomylić z samym "Timeline"
+        has_separator = ',' in line or ';' in line
+        has_keyword = any(k in line_lower for k in header_keywords)
+
+        # Wyjątek: jeśli linia to np. "Time, Temp" (header w samej linii Timeline)
+        if has_separator and has_keyword:
+            header_index = j
+            break
+
+    csv_data = "\n".join(lines[header_index:])
     try:
         # Próba autodetekcji separatora
         df = pd.read_csv(io.StringIO(csv_data), sep=None, engine='python')
