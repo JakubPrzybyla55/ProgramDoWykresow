@@ -1,9 +1,11 @@
 import pandas as pd
 import io
 import os
+import numpy as np
+from scipy.signal import savgol_filter
 
 def parse_time_to_seconds(time_str):
-    """Converts a time string 'mm:ss' to seconds (float)."""
+    """Konwertuje ciąg czasu 'mm:ss' na sekundy (float)."""
     try:
         if pd.isna(time_str) or str(time_str).strip() in ['-', '', 'nan']:
             return None
@@ -18,10 +20,10 @@ def parse_time_to_seconds(time_str):
 
 def parse_roasttime_csv(file):
     """
-    Parses the RoastTime CSV file.
-    Returns:
-        df: DataFrame with time-series data.
-        milestones: Dictionary of actual events {EventName: TimeSeconds}.
+    Parsuje plik CSV RoastTime.
+    Zwraca:
+        df: DataFrame z danymi szeregów czasowych.
+        milestones: Słownik rzeczywistych zdarzeń {NazwaZdarzenia: CzasSekundy}.
     """
     content = ""
     try:
@@ -35,7 +37,7 @@ def parse_roasttime_csv(file):
         # String path
         elif isinstance(file, str):
             if not os.path.exists(file):
-                raise FileNotFoundError(f"File not found: {file}")
+                raise FileNotFoundError(f"Plik nie znaleziony: {file}")
             with open(file, 'r', encoding='utf-8') as f:
                 content = f.read()
         # StringIO/File-like
@@ -46,11 +48,11 @@ def parse_roasttime_csv(file):
             else:
                 content = data
     except Exception as e:
-        raise ValueError(f"Failed to read file: {e}")
+        raise ValueError(f"Nie udało się odczytać pliku: {e}")
 
     lines = content.split('\n')
 
-    # --- Parse Milestones (Metadata section) ---
+    # --- Parsowanie kamieni milowych (sekcja metadanych) ---
     milestones = {}
     timeline_index = -1
 
@@ -59,7 +61,7 @@ def parse_roasttime_csv(file):
             timeline_index = i
             break
 
-        # Yellowing Parsing
+        # Parsowanie Yellowing (Żółknięcie)
         if "Yellowing" in line:
             if i + 1 < len(lines):
                 headers = line.split(',')
@@ -78,7 +80,7 @@ def parse_roasttime_csv(file):
                 except ValueError:
                     pass
 
-        # 1st Crack Parsing
+        # Parsowanie 1st Crack (Pierwsze Pęknięcie)
         if "1st Crack" in line:
             if i + 2 < len(lines):
                 data_line = lines[i+2]
@@ -90,10 +92,13 @@ def parse_roasttime_csv(file):
                 except IndexError:
                     pass
 
-    if timeline_index == -1:
-        raise ValueError("Could not find 'Timeline' header in the CSV file.")
+        # Parsowanie Drop (Koniec) - jeśli dostępne
+        # Można dodać parsowanie innych zdarzeń tutaj w przyszłości
 
-    # --- Parse Timeline Data ---
+    if timeline_index == -1:
+        raise ValueError("Nie można znaleźć nagłówka 'Timeline' w pliku CSV.")
+
+    # --- Parsowanie danych osi czasu ---
     csv_data = "\n".join(lines[timeline_index:])
     df = pd.read_csv(io.StringIO(csv_data))
 
@@ -119,22 +124,19 @@ def parse_roasttime_csv(file):
 
 def parse_profile_csv(file):
     """
-    Parses the Profile CSV file.
+    Parsuje plik CSV Profilu (Planu).
     """
-    # Handle file path vs file-like object
     try:
         if isinstance(file, str):
             if not os.path.exists(file):
-                raise FileNotFoundError(f"File not found: {file}")
+                raise FileNotFoundError(f"Plik nie znaleziony: {file}")
             df = pd.read_csv(file)
         else:
-            # If it's a StringIO or UploadedFile
-            # Reset pointer just in case
             if hasattr(file, 'seek'):
                 file.seek(0)
             df = pd.read_csv(file)
     except Exception as e:
-        raise ValueError(f"Failed to read profile file: {e}")
+        raise ValueError(f"Nie udało się odczytać pliku profilu: {e}")
 
     df.columns = df.columns.str.strip()
 
@@ -147,33 +149,91 @@ def parse_profile_csv(file):
             df.columns = ['Faza', 'Czas', 'Temperatura']
             df['Time_Seconds'] = df['Czas'].apply(parse_time_to_seconds)
         else:
-             raise ValueError("Profile CSV must have a 'Czas' or 'Time' column.")
+             raise ValueError("Plik CSV profilu musi zawierać kolumnę 'Czas' lub 'Time'.")
 
     return df
 
 def calculate_ror(df, temp_col='IBTS Temp', time_col='Time_Seconds', window_seconds=10):
     """
-    Calculates RoR (Rate of Rise).
+    Oblicza RoR (Szybkość Wzrostu) metodą prostej różnicy (pochodna dyskretna).
     """
-    if df.empty or time_col not in df.columns:
+    if df.empty or time_col not in df.columns or temp_col not in df.columns:
         return df
 
     df = df.sort_values(by=time_col).copy()
-    df['Calc_RoR'] = df[temp_col].diff(periods=window_seconds) / df[time_col].diff(periods=window_seconds) * 60
+
+    # Obliczamy interwał próbkowania (zakładając w miarę stały)
+    # Jeśli dane są nierówne, lepiej użyć shift opartego na indeksie, który w przybliżeniu odpowiada sekundom
+    # Tutaj użyjemy shiftu o liczbę wierszy odpowiadającą mniej więcej oknu czasowemu
+    # Najpierw spróbujmy znaleźć ile wierszy to 'window_seconds'
+
+    avg_diff = df[time_col].diff().mean()
+    if pd.isna(avg_diff) or avg_diff == 0:
+        periods = 1
+    else:
+        periods = int(round(window_seconds / avg_diff))
+        if periods < 1:
+            periods = 1
+
+    df['Calc_RoR'] = df[temp_col].diff(periods=periods) / df[time_col].diff(periods=periods) * 60
+
+    return df
+
+def calculate_ror_sg(df, temp_col='IBTS Temp', time_col='Time_Seconds', window_length=15, polyorder=2):
+    """
+    Oblicza RoR przy użyciu filtra Savitzky'ego-Golaya (wygładzanie + pochodna).
+    """
+    if df.empty or temp_col not in df.columns:
+        return df
+
+    # Savgol wymaga nieparzystej długości okna
+    if window_length % 2 == 0:
+        window_length += 1
+
+    # Długość okna nie może przekraczać długości danych
+    if len(df) <= window_length:
+        window_length = len(df) if len(df) % 2 != 0 else len(df) - 1
+        if window_length < polyorder + 2:
+             # Za mało danych na sensowne obliczenia
+             df['Calc_RoR_SG'] = 0
+             return df
+
+    # Używamy pochodnej (deriv=1) i skalujemy (delta)
+    # Ważne: delta powinna być średnim krokiem czasowym w sekundach, ale
+    # poniewaz savgol działa na indeksach, wynik jest "na próbkę".
+    # Musimy to przeliczyć na "na minutę".
+
+    avg_time_step = df[time_col].diff().median()
+    if pd.isna(avg_time_step) or avg_time_step == 0:
+        avg_time_step = 1.0 # fallback
+
+    try:
+        # Obliczamy pierwszą pochodną (temp/próbkę)
+        deriv = savgol_filter(df[temp_col], window_length=window_length, polyorder=polyorder, deriv=1)
+
+        # Konwersja: (Stopnie / Próbka) * (1 Próbka / X sekund) * (60 sekund / 1 minuta)
+        # = Stopnie / X sekund * 60
+        # = Stopnie/Sekunda * 60 = Stopnie/Minuta
+
+        ror = (deriv / avg_time_step) * 60
+        df['Calc_RoR_SG'] = ror
+    except Exception as e:
+        print(f"Błąd obliczania SG: {e}")
+        df['Calc_RoR_SG'] = 0
 
     return df
 
 def smooth_data(series, window=30):
     """
-    Smooths data using a rolling mean.
+    Wygładza dane używając średniej ruchomej.
     """
     return series.rolling(window=window, min_periods=1, center=True).mean()
 
-# --- New File Management Functions ---
+# --- Funkcje zarządzania plikami ---
 
 def get_profiles(base_path='data'):
     """
-    Scans the base_path and returns a list of profile names (subdirectories).
+    Skanuje base_path i zwraca listę nazw profili (podkatalogi).
     """
     if not os.path.exists(base_path):
         return []
@@ -183,16 +243,16 @@ def get_profiles(base_path='data'):
 
 def get_roast_files(profile_name, base_path='data'):
     """
-    Returns the path to the plan file and a list of paths to roast files.
-    Structure:
-       data/ProfileName/Plan/*.csv (takes first one)
-       data/ProfileName/Wypaly/*.csv (returns all)
+    Zwraca ścieżkę do pliku planu i listę ścieżek do plików wypałów.
+    Struktura:
+       data/ProfileName/Plan/*.csv (bierze pierwszy)
+       data/ProfileName/Wypaly/*.csv (zwraca wszystkie)
     """
     profile_dir = os.path.join(base_path, profile_name)
     plan_dir = os.path.join(profile_dir, 'Plan')
-    wypaly_dir = os.path.join(profile_dir, 'Wypaly') # Using 'Wypaly' without special chars for safety, or check both
+    wypaly_dir = os.path.join(profile_dir, 'Wypaly')
 
-    # Check for 'Wypały' if 'Wypaly' doesn't exist
+    # Sprawdź 'Wypały' jeśli 'Wypaly' nie istnieje
     if not os.path.exists(wypaly_dir) and os.path.exists(os.path.join(profile_dir, 'Wypały')):
         wypaly_dir = os.path.join(profile_dir, 'Wypały')
 
