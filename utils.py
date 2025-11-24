@@ -2,6 +2,7 @@ import pandas as pd
 import io
 import os
 import numpy as np
+import json
 
 # Próba importu scipy dla filtra Savitzky-Golaya
 try:
@@ -392,13 +393,20 @@ def calculate_thermal_dose(df, temp_col='IBTS Temp', time_col='Time_Seconds', t_
     if df.empty or time_col not in df.columns or temp_col not in df.columns:
         return df
 
-    # Tworzymy kopię i filtrujemy według czasu startu
-    # Ważne: nie modyfikujemy oryginalnego df w miejscu, ale musimy zwrócić kolumnę dopasowaną do oryginału.
-    # Najlepiej obliczyć to na kopii, a potem złączyć wynik.
+    # Pracujemy na kopii, aby nie modyfikować oryginału i zresetować kolumnę
+    df = df.copy()
 
-    # Sortowanie
+    suffix = "_Probe" if "Probe" in temp_col else ""
+    result_col = f'Thermal_Dose{suffix}'
+
+    # Reset kolumny (wypełnij NaN), aby usunąć stare dane w przypadku ponownego obliczania
+    df[result_col] = np.nan
+
+    # Tworzymy podzbiór do obliczeń
     df_calc = df[df[time_col] >= start_time_threshold].copy()
+
     if df_calc.empty:
+        df[result_col] = 0.0
         return df
 
     df_calc = df_calc.sort_values(by=time_col)
@@ -438,21 +446,68 @@ def calculate_thermal_dose(df, temp_col='IBTS Temp', time_col='Time_Seconds', t_
     # Skumulowana suma
     cumulative = increments.cumsum()
 
-    # Nazwa kolumny wynikowej
-    suffix = "_Probe" if "Probe" in temp_col else ""
-    result_col = f'Thermal_Dose{suffix}'
-
     # Przypisanie do df_calc
     df_calc[result_col] = cumulative
 
-    # Teraz musimy to zmapować z powrotem do oryginalnego df
-    # Ponieważ filtrowaliśmy, w oryginalnym df wiersze poniżej progu powinny mieć np. 0 lub NaN.
-    # Przyjmijmy 0 dla czasów przed progiem.
-
-    # Używamy indeksu do złączenia
+    # Teraz musimy to zmapować z powrotem do głównego df
     df.loc[df_calc.index, result_col] = df_calc[result_col]
 
     # Wypełnienie NaN zerami (dla czasów przed startem)
     df[result_col] = df[result_col].fillna(0.0)
 
     return df
+
+# --- Metadata (Agtron) Management ---
+
+def load_metadata(profile_path):
+    """
+    Wczytuje metadata.json z folderu profilu.
+    Zwraca słownik. Jeśli plik nie istnieje lub jest uszkodzony, zwraca pusty słownik.
+    Struktura:
+    {
+        "agtron": {
+             "filename1.csv": 55.5,
+             "filename2.csv": 60.0
+        }
+    }
+    """
+    meta_path = os.path.join(profile_path, 'metadata.json')
+    if not os.path.exists(meta_path):
+        return {}
+
+    try:
+        with open(meta_path, 'r', encoding='utf-8') as f:
+            return json.load(f)
+    except Exception as e:
+        print(f"Błąd wczytywania metadata.json: {e}")
+        return {}
+
+def save_metadata(profile_path, data):
+    """
+    Zapisuje słownik data do metadata.json w folderze profilu.
+    """
+    meta_path = os.path.join(profile_path, 'metadata.json')
+    try:
+        with open(meta_path, 'w', encoding='utf-8') as f:
+            json.dump(data, f, indent=4)
+    except Exception as e:
+        print(f"Błąd zapisu metadata.json: {e}")
+
+def get_agtron(profile_path, roast_filename):
+    """
+    Pobiera wartość Agtron dla danego pliku wypału. Zwraca None, jeśli brak.
+    """
+    data = load_metadata(profile_path)
+    agtron_data = data.get('agtron', {})
+    return agtron_data.get(roast_filename)
+
+def set_agtron(profile_path, roast_filename, value):
+    """
+    Ustawia wartość Agtron dla danego pliku wypału i zapisuje do pliku.
+    """
+    data = load_metadata(profile_path)
+    if 'agtron' not in data:
+        data['agtron'] = {}
+
+    data['agtron'][roast_filename] = value
+    save_metadata(profile_path, data)
