@@ -12,6 +12,7 @@ from utils import (
     smooth_data,
     get_profiles,
     get_roast_files,
+    get_all_roast_files,
     SCIPY_AVAILABLE,
     get_agtron,
     set_agtron
@@ -49,6 +50,16 @@ st.markdown("""
         }
         .stTabs [aria-selected="true"] {
             background-color: #4F4F4F;
+        }
+        /* Kompresja paska bocznego */
+        [data-testid="stSidebar"] > div:first-child {
+            padding-top: 1rem;
+        }
+        [data-testid="stSidebar"] .stVerticalBlock {
+            gap: 0.5rem;
+        }
+        [data-testid="stSidebar"] .stExpander {
+            margin-bottom: 0.5rem;
         }
     </style>
 """, unsafe_allow_html=True)
@@ -139,100 +150,102 @@ else:
     st.sidebar.markdown("---")
 
     # --- Sekcja Widoczności Danych ---
-    st.sidebar.header("Widoczność Danych")
-    show_plan = st.sidebar.checkbox("Pokaż Plan", value=True)
-    show_ibts = st.sidebar.checkbox("Pokaż IBTS (Temp/RoR)", value=True)
-    show_probe = st.sidebar.checkbox("Pokaż Sondę (Temp/RoR)", value=True)
+    with st.sidebar.expander("Ustawienia Widoczności i Wykresów", expanded=True):
+        st.subheader("Widoczność Danych")
+        show_plan = st.checkbox("Pokaż Plan", value=True)
+        show_ibts = st.checkbox("Pokaż IBTS (Temp/RoR)", value=True)
+        show_probe = st.checkbox("Pokaż Sondę (Temp/RoR)", value=True)
 
-    st.sidebar.markdown("---")
+        st.subheader("Zakres osi RoR")
+        col_ror_min, col_ror_max = st.columns(2)
+        ror_y_min = col_ror_min.number_input("Min RoR", value=-5)
+        ror_y_max = col_ror_max.number_input("Max RoR", value=35)
+
+        st.subheader("Zakres osi Ustawień (Moc/Nawiew)")
+        col_set_min, col_set_max = st.columns(2)
+        settings_y_min = col_set_min.number_input("Min", value=0)
+        settings_y_max = col_set_max.number_input("Max", value=9)
 
     # --- Ustawienia RoR ---
-    st.sidebar.header("Ustawienia RoR")
+    with st.sidebar.expander("Ustawienia RoR"):
+        if not SCIPY_AVAILABLE:
+             st.sidebar.warning("Metoda Savitzky-Golay jest niedostępna (brak pakietu scipy).")
 
-    if not SCIPY_AVAILABLE:
-         st.sidebar.warning("Metoda Savitzky-Golay jest niedostępna (brak pakietu scipy).")
+        method_options = ['Średnia Ruchoma']
+        if SCIPY_AVAILABLE:
+            method_options.append('Savitzky-Golay')
 
-    method_options = ['Średnia Ruchoma']
-    if SCIPY_AVAILABLE:
-        method_options.append('Savitzky-Golay')
+        # --- Ustawienia IBTS ---
+        st.subheader("IBTS")
+        ror_method_ibts = st.radio(
+            "Metoda (IBTS)",
+            method_options,
+            index=0,
+            key="ror_method_ibts"
+        )
 
-    # --- Ustawienia IBTS ---
-    st.sidebar.subheader("IBTS")
-    ror_method_ibts = st.sidebar.radio(
-        "Metoda (IBTS)",
-        method_options,
-        index=0,
-        key="ror_method_ibts"
-    )
+        ibts_params = {}
+        if ror_method_ibts == 'Średnia Ruchoma':
+            window_sec = st.number_input("Okno Wygładzania (sek) - IBTS", min_value=1, max_value=60, value=15, key="ibts_ma_win")
+            ibts_params['window_sec'] = window_sec
+        elif ror_method_ibts == 'Savitzky-Golay':
+            sg_window = st.number_input("Okno SG - IBTS", min_value=3, max_value=99, value=15, step=2, key="ibts_sg_win")
+            sg_poly = st.number_input("Rząd wielomianu - IBTS", min_value=1, max_value=5, value=2, key="ibts_sg_poly")
+            sg_deriv = st.number_input("Rząd pochodnej - IBTS", min_value=1, max_value=3, value=1, key="ibts_sg_deriv")
+            if sg_window % 2 == 0:
+                sg_window += 1
+            ibts_params['sg_window'] = sg_window
+            ibts_params['sg_poly'] = sg_poly
+            ibts_params['sg_deriv'] = sg_deriv
 
-    ibts_params = {}
-    if ror_method_ibts == 'Średnia Ruchoma':
-        window_sec = st.sidebar.number_input("Okno Wygładzania (sek) - IBTS", min_value=1, max_value=60, value=15, key="ibts_ma_win")
-        ibts_params['window_sec'] = window_sec
-    elif ror_method_ibts == 'Savitzky-Golay':
-        sg_window = st.sidebar.number_input("Okno SG - IBTS", min_value=3, max_value=99, value=15, step=2, key="ibts_sg_win")
-        sg_poly = st.sidebar.number_input("Rząd wielomianu - IBTS", min_value=1, max_value=5, value=2, key="ibts_sg_poly")
-        sg_deriv = st.sidebar.number_input("Rząd pochodnej - IBTS", min_value=1, max_value=3, value=1, key="ibts_sg_deriv")
-        if sg_window % 2 == 0:
-            sg_window += 1
-        ibts_params['sg_window'] = sg_window
-        ibts_params['sg_poly'] = sg_poly
-        ibts_params['sg_deriv'] = sg_deriv
+        # --- Ustawienia Sondy (Probe) ---
+        st.subheader("Sonda")
+        ror_method_probe = st.radio(
+            "Metoda (Sonda)",
+            method_options,
+            index=0,
+            key="ror_method_probe"
+        )
 
-    # --- Ustawienia Sondy (Probe) ---
-    st.sidebar.subheader("Sonda")
-    ror_method_probe = st.sidebar.radio(
-        "Metoda (Sonda)",
-        method_options,
-        index=0,
-        key="ror_method_probe"
-    )
-
-    probe_params = {}
-    if ror_method_probe == 'Średnia Ruchoma':
-        window_sec = st.sidebar.number_input("Okno Wygładzania (sek) - Sonda", min_value=1, max_value=60, value=15, key="probe_ma_win")
-        probe_params['window_sec'] = window_sec
-    elif ror_method_probe == 'Savitzky-Golay':
-        sg_window = st.sidebar.number_input("Okno SG - Sonda", min_value=3, max_value=99, value=15, step=2, key="probe_sg_win")
-        sg_poly = st.sidebar.number_input("Rząd wielomianu - Sonda", min_value=1, max_value=5, value=2, key="probe_sg_poly")
-        sg_deriv = st.sidebar.number_input("Rząd pochodnej - Sonda", min_value=1, max_value=3, value=1, key="probe_sg_deriv")
-        if sg_window % 2 == 0:
-            sg_window += 1
-        probe_params['sg_window'] = sg_window
-        probe_params['sg_poly'] = sg_poly
-        probe_params['sg_deriv'] = sg_deriv
+        probe_params = {}
+        if ror_method_probe == 'Średnia Ruchoma':
+            window_sec = st.number_input("Okno Wygładzania (sek) - Sonda", min_value=1, max_value=60, value=15, key="probe_ma_win")
+            probe_params['window_sec'] = window_sec
+        elif ror_method_probe == 'Savitzky-Golay':
+            sg_window = st.number_input("Okno SG - Sonda", min_value=3, max_value=99, value=15, step=2, key="probe_sg_win")
+            sg_poly = st.number_input("Rząd wielomianu - Sonda", min_value=1, max_value=5, value=2, key="probe_sg_poly")
+            sg_deriv = st.number_input("Rząd pochodnej - Sonda", min_value=1, max_value=3, value=1, key="probe_sg_deriv")
+            if sg_window % 2 == 0:
+                sg_window += 1
+            probe_params['sg_window'] = sg_window
+            probe_params['sg_poly'] = sg_poly
+            probe_params['sg_deriv'] = sg_deriv
 
     # --- Ustawienia Dawki Termicznej ---
-    st.sidebar.markdown("---")
-    st.sidebar.header("Ustawienia Dawki Termicznej")
-    dose_t_base = st.sidebar.number_input("Temperatura Bazowa (°C)", value=100.0, step=1.0)
-    dose_start_time = st.sidebar.number_input("Start Obliczeń (sek)", value=5.0, step=1.0)
+    with st.sidebar.expander("Ustawienia Dawki Termicznej"):
+        dose_t_base = st.number_input("Temperatura Bazowa (°C)", value=100.0, step=1.0)
+        dose_start_time = st.number_input("Start Obliczeń (sek)", value=5.0, step=1.0)
 
-    # --- Limity Osi ---
-    st.sidebar.markdown("---")
-    st.sidebar.header("Ustawienia Wykresów")
-
-    st.sidebar.subheader("Zakres osi RoR")
-    col_ror_min, col_ror_max = st.sidebar.columns(2)
-    ror_y_min = col_ror_min.number_input("Min RoR", value=-5)
-    ror_y_max = col_ror_max.number_input("Max RoR", value=35)
-
-    st.sidebar.subheader("Zakres osi Ustawień (Moc/Nawiew)")
-    col_set_min, col_set_max = st.sidebar.columns(2)
-    settings_y_min = col_set_min.number_input("Min", value=0)
-    settings_y_max = col_set_max.number_input("Max", value=9)
+    # --- Analiza Teoretyczna ---
+    with st.sidebar.expander("Analiza Teoretyczna (Wielomian)"):
+        poly_degree = st.number_input("Stopień wielomianu", min_value=1, max_value=10, value=3, step=1)
 
 
     # ==========================
     # TABS STRUCTURE
     # ==========================
 
-    tab1, tab2 = st.tabs(["Analiza Bieżąca", "Symulacja Dawki (Wszystkie)"])
+    tab_plan_analysis, tab_plan_comparison, tab_general_comparison, tab_editor = st.tabs([
+        "Analiza Planu",
+        "Porównanie Wypałów (dla Planu)",
+        "Porównanie Wypałów (Ogólne)",
+        "Edytor Planu"
+    ])
 
     # ==========================
-    # TAB 1: ANALIZA BIEŻĄCA
+    # TAB 1: ANALIZA PLANU (BIEŻĄCA)
     # ==========================
-    with tab1:
+    with tab_plan_analysis:
         # Przetwarzanie Danych
         actual_milestones = {}
         actual_df = pd.DataFrame()
@@ -483,7 +496,12 @@ else:
             height=600,
             margin=dict(t=30, b=0, l=0, r=0),
             hovermode="x unified",
-            legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1)
+            legend=dict(
+                orientation="v",
+                yanchor="top", y=0.98,
+                xanchor="left", x=0.01,
+                bgcolor="rgba(0,0,0,0.5)"
+            )
         )
         fig_temp.update_yaxes(title_text="Temperatura (°C)", row=1, col=1)
         fig_temp.update_yaxes(title_text="Wartość", range=[settings_y_min, settings_y_max], dtick=1, row=2, col=1)
@@ -565,7 +583,12 @@ else:
                 height=500,
                 margin=dict(t=30, b=0, l=0, r=0),
                 hovermode="x unified",
-                legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1)
+                legend=dict(
+                    orientation="v",
+                    yanchor="top", y=0.98,
+                    xanchor="left", x=0.01,
+                    bgcolor="rgba(0,0,0,0.5)"
+                )
             )
             fig_ror.update_yaxes(title_text="RoR (°C/min)", range=[ror_y_min, ror_y_max], row=1, col=1)
             fig_ror.update_yaxes(title_text="Wartość", range=[settings_y_min, settings_y_max], dtick=1, row=2, col=1)
@@ -610,19 +633,72 @@ else:
                 fig_dose.update_yaxes(title_text="Temperatura (°C)", secondary_y=False)
                 fig_dose.update_yaxes(title_text="Dawka", secondary_y=True)
                 fig_dose.update_xaxes(title_text="Czas (sekundy)")
-                fig_dose.update_layout(template="plotly_dark", height=400, margin=dict(t=30, b=0, l=0, r=0), hovermode="x unified")
+                fig_dose.update_layout(
+                    template="plotly_dark",
+                    height=400,
+                    margin=dict(t=30, b=0, l=0, r=0),
+                    hovermode="x unified",
+                    legend=dict(
+                        orientation="v",
+                        yanchor="top", y=0.98,
+                        xanchor="left", x=0.01,
+                        bgcolor="rgba(0,0,0,0.5)"
+                    )
+                )
 
                 st.plotly_chart(fig_dose, use_container_width=True)
 
                 # Metrics
                 st.subheader("Podsumowanie Dawki Termicznej")
-                m_col1, m_col2 = st.columns(2)
+                m_col1, m_col2, m_col3 = st.columns(3)
                 if 'Thermal_Dose' in actual_df.columns:
                     final_dose = actual_df['Thermal_Dose'].iloc[-1]
                     m_col1.metric("Całkowita Dawka (IBTS)", f"{final_dose:,.0f}")
                 if 'Thermal_Dose_Probe' in actual_df.columns:
                     final_dose_probe = actual_df['Thermal_Dose_Probe'].iloc[-1]
                     m_col2.metric("Całkowita Dawka (Sonda)", f"{final_dose_probe:,.0f}")
+
+                # --- Obliczenia Teoretyczne (Wielomian) ---
+                try:
+                    # 1. Przygotuj dane z planu
+                    x_plan = plan_df_sorted['Time_Seconds']
+                    y_plan = plan_df_sorted['Temperatura']
+
+                    # 2. Dopasuj wielomian
+                    coeffs = np.polyfit(x_plan, y_plan, poly_degree)
+                    poly = np.poly1d(coeffs)
+
+                    # 3. Stwórz teoretyczną siatkę czasu
+                    max_time = x_plan.max()
+                    if not actual_df.empty:
+                        max_time = max(max_time, actual_df['Time_Seconds'].max())
+
+                    time_grid = np.linspace(0, max_time, int(max_time) + 1)
+
+                    # 4. Oblicz teoretyczną temperaturę
+                    temp_theoretical = poly(time_grid)
+
+                    df_theoretical = pd.DataFrame({
+                        'Time_Seconds': time_grid,
+                        'Theoretical_Temp': temp_theoretical
+                    })
+
+                    # 5. Oblicz teoretyczną dawkę
+                    df_theoretical = calculate_thermal_dose(
+                        df_theoretical,
+                        temp_col='Theoretical_Temp',
+                        time_col='Time_Seconds',
+                        t_base=dose_t_base,
+                        start_time_threshold=dose_start_time
+                    )
+
+                    # 6. Wyświetl wynik
+                    final_dose_theoretical = df_theoretical['Thermal_Dose'].iloc[-1]
+                    m_col3.metric("Teoretyczna Dawka (Plan)", f"{final_dose_theoretical:,.0f}")
+
+                except Exception as e:
+                    m_col3.metric("Teoretyczna Dawka (Plan)", "Błąd")
+                    print(f"Błąd obliczania dawki teoretycznej: {e}")
 
             # --- Analiza (Tables) ---
             st.header("Analiza")
@@ -717,11 +793,52 @@ else:
 
                 st.table(pd.DataFrame(phase_metrics))
 
-    # ==========================
-    # TAB 2: SYMULACJA DAWKI (WSZYSTKIE)
-    # ==========================
-    with tab2:
-        st.subheader("Porównanie Dawki Termicznej (Wszystkie Wypały)")
+            # --- Wykres Dopasowania Wielomianem ---
+            st.header("Analiza Teoretyczna - Dopasowanie Wielomianem do Planu")
+            try:
+                # Sprawdzenie czy df_theoretical istnieje z poprzednich obliczeń
+                if 'df_theoretical' in locals() and not df_theoretical.empty:
+                    fig_poly = go.Figure()
+
+                    # 1. Dodaj punkty z planu
+                    fig_poly.add_trace(go.Scatter(
+                        x=plan_df_sorted['Time_Seconds'],
+                        y=plan_df_sorted['Temperatura'],
+                        mode='markers',
+                        name='Punkty z Planu',
+                        marker=dict(size=10, color='cyan', symbol='x')
+                    ))
+
+                    # 2. Dodaj dopasowaną krzywą wielomianową
+                    fig_poly.add_trace(go.Scatter(
+                        x=df_theoretical['Time_Seconds'],
+                        y=df_theoretical['Theoretical_Temp'],
+                        mode='lines',
+                        name=f'Dopasowanie (st. {poly_degree})',
+                        line=dict(color='lime', width=3)
+                    ))
+
+                    fig_poly.update_layout(
+                        template="plotly_dark",
+                        height=400,
+                        title="Dopasowanie Krzywej Wielomianowej do Punktów Planu",
+                        xaxis_title="Czas (sekundy)",
+                        yaxis_title="Temperatura (°C)",
+                        margin=dict(t=50, b=0, l=0, r=0)
+                    )
+                    st.plotly_chart(fig_poly, use_container_width=True)
+
+            except NameError:
+                # Jeśli df_theoretical nie istnieje (np. błąd wcześniej), nie rób nic
+                st.warning("Nie można wygenerować wykresu dopasowania wielomianem z powodu wcześniejszego błędu.")
+            except Exception as e:
+                st.error(f"Wystąpił błąd podczas tworzenia wykresu dopasowania wielomianem: {e}")
+
+    # =======================================
+    # TAB 2: PORÓWNANIE WYPAŁÓW (DLA PLANU)
+    # =======================================
+    with tab_plan_comparison:
+        st.subheader(f"Porównanie Wszystkich Wypałów dla Planu: {selected_profile}")
 
         if not roast_files_paths:
              st.info("Brak plików wypałów do analizy.")
@@ -823,3 +940,219 @@ else:
                 )
             else:
                 st.warning("Nie udało się obliczyć dawki dla żadnego pliku.")
+
+    # =======================================
+    # TAB 3: PORÓWNANIE WYPAŁÓW (OGÓLNE)
+    # =======================================
+    with tab_general_comparison:
+        st.subheader("Porównanie Wszystkich Wypałów (Wszystkie Profile)")
+
+        # Używamy nowej funkcji do pobrania wszystkich plików
+        all_roast_files = get_all_roast_files(base_data_path)
+
+        if not all_roast_files:
+             st.info("Brak plików wypałów do analizy w żadnym z profili.")
+        else:
+            all_roasts_data = []
+            progress_bar = st.progress(0, text="Przetwarzanie wszystkich wypałów...")
+
+            import plotly.colors as pcolors
+            colors_cycle = pcolors.qualitative.Plotly
+            fig_all_dose = go.Figure()
+
+            for i, r_path in enumerate(all_roast_files):
+                f_name = os.path.basename(r_path)
+                # Wyciągnij nazwę profilu ze ścieżki
+                try:
+                    profile_name_from_path = os.path.basename(os.path.dirname(os.path.dirname(r_path)))
+                except:
+                    profile_name_from_path = "Nieznany"
+
+
+                try:
+                    r_df, _ = parse_roasttime_csv(r_path)
+
+                    if 'IBTS Temp' in r_df.columns:
+                        r_df = calculate_thermal_dose(r_df, temp_col='IBTS Temp',
+                                                      time_col='Time_Seconds', t_base=dose_t_base,
+                                                      start_time_threshold=dose_start_time)
+
+                        if 'Thermal_Dose' in r_df.columns:
+                            final_dose = r_df['Thermal_Dose'].iloc[-1]
+                            duration = r_df['Time_Seconds'].iloc[-1]
+
+                            # Pobierz Agtron z odpowiedniego profilu
+                            agtron_val = get_agtron(os.path.join(base_data_path, profile_name_from_path), f_name)
+                            if agtron_val is None:
+                                agtron_val = 0.0
+
+                            all_roasts_data.append({
+                                "Profil": profile_name_from_path,
+                                "Nazwa Pliku": f_name,
+                                "Agtron": agtron_val,
+                                "Całkowita Dawka": final_dose,
+                                "Czas Trwania": f"{int(duration//60)}:{int(duration%60):02d}",
+                            })
+
+                            color_idx = i % len(colors_cycle)
+                            fig_all_dose.add_trace(go.Scatter(
+                                x=r_df['Time_Seconds'],
+                                y=r_df['Thermal_Dose'],
+                                mode='lines',
+                                name=f"{profile_name_from_path} / {f_name}",
+                                line=dict(color=colors_cycle[color_idx], width=2),
+                                opacity=0.8,
+                                hovertemplate=f"<b>{f_name}</b><br>Czas: %{{x:.0f}}s<br>Dawka: %{{y:.0f}}<extra></extra>"
+                            ))
+                except Exception as e:
+                    print(f"Błąd przetwarzania {f_name} dla symulacji ogólnej: {e}")
+
+                progress_bar.progress((i + 1) / len(all_roast_files))
+
+            progress_bar.empty()
+
+            fig_all_dose.update_layout(
+                template="plotly_dark",
+                height=600,
+                title="Krzywe Skumulowanej Dawki Termicznej (Wszystkie Profile)",
+                xaxis_title="Czas (sekundy)",
+                yaxis_title="Dawka Termiczna",
+                hovermode="closest",
+                margin=dict(t=50, b=0, l=0, r=0)
+            )
+            st.plotly_chart(fig_all_dose, use_container_width=True)
+
+            if all_roasts_data:
+                st.subheader("Dane Zbiorcze (Wszystkie Profile)")
+                df_all = pd.DataFrame(all_roasts_data)
+                df_all = df_all.sort_values(by="Agtron", ascending=False)
+
+                st.dataframe(
+                    df_all,
+                    column_config={
+                        "Profil": st.column_config.TextColumn("Profil"),
+                        "Nazwa Pliku": st.column_config.TextColumn("Plik"),
+                        "Agtron": st.column_config.NumberColumn("Kolor (Agtron)", format="%.1f"),
+                        "Całkowita Dawka": st.column_config.NumberColumn("Dawka Total", format="%.0f"),
+                        "Czas Trwania": st.column_config.TextColumn("Czas"),
+                    },
+                    use_container_width=True,
+                    hide_index=True
+                )
+            else:
+                st.warning("Nie udało się obliczyć dawki dla żadnego pliku.")
+
+    # ==========================
+    # TAB 4: EDYTOR PLANU
+    # ==========================
+    with tab_editor:
+        st.subheader("Edytor Planu Wypału")
+
+        # --- Wybór Trybu ---
+        edit_mode = st.radio(
+            "Wybierz tryb pracy edytora:",
+            ["Dodaj nowy plan", "Modyfikuj istniejący plan"],
+            horizontal=True,
+            label_visibility="collapsed"
+        )
+
+        # --- Interfejs dla DODAWANIA NOWEGO PLANU ---
+        if edit_mode == "Dodaj nowy plan":
+            st.markdown("#### Tworzenie nowego planu")
+
+            col1, col2 = st.columns(2)
+            with col1:
+                new_plan_profile = st.selectbox(
+                    "Wybierz profil, do którego dodać nowy plan",
+                    options=profiles,
+                    index=profiles.index(selected_profile) if selected_profile in profiles else 0,
+                    key="new_plan_profile_select"
+                )
+            with col2:
+                new_plan_filename = st.text_input(
+                    "Nazwa pliku dla nowego planu (np. `nowy_eksperyment.csv`)",
+                    placeholder="plan.csv"
+                )
+
+            st.markdown("Wprowadź etapy planu poniżej. Możesz dodawać i usuwać wiersze.")
+
+            plan_cols_config = {
+                "Faza": st.column_config.TextColumn("Faza", required=True, help="Nazwa etapu, np. 'Yellowing'"),
+                "Czas": st.column_config.TextColumn("Czas (mm:ss)", required=True, help="Czas od rozpoczęcia palenia."),
+                "Temperatura": st.column_config.NumberColumn("Temperatura (°C)", required=True),
+                "Nawiew": st.column_config.NumberColumn("Nawiew (0-9)"),
+                "Moc": st.column_config.NumberColumn("Moc (0-9)")
+            }
+
+            # Domyślna struktura dla nowego planu
+            df_new_plan = pd.DataFrame([
+                {"Faza": "Preheat", "Czas": "0:00", "Temperatura": 180.0, "Nawiew": 0, "Moc": 0},
+                {"Faza": "Charge", "Czas": "0:05", "Temperatura": 180.0, "Nawiew": 5, "Moc": 8},
+                {"Faza": "Yellowing", "Czas": "4:00", "Temperatura": 160.0, "Nawiew": 4, "Moc": 7},
+                {"Faza": "1st Crack", "Czas": "7:30", "Temperatura": 195.0, "Nawiew": 3, "Moc": 5},
+                {"Faza": "Drop", "Czas": "9:00", "Temperatura": 205.0, "Nawiew": 0, "Moc": 0},
+            ])
+
+            edited_df_new = st.data_editor(
+                df_new_plan,
+                column_config=plan_cols_config,
+                num_rows="dynamic",
+                use_container_width=True,
+                key="new_plan_editor"
+            )
+
+            if st.button("Zapisz nowy plan", type="primary"):
+                if not new_plan_filename:
+                    st.error("Proszę podać nazwę pliku.")
+                elif not new_plan_filename.endswith('.csv'):
+                    st.error("Nazwa pliku musi kończyć się na `.csv`.")
+                else:
+                    save_path_dir = os.path.join(base_data_path, new_plan_profile, 'Plan')
+                    os.makedirs(save_path_dir, exist_ok=True)
+                    save_path_file = os.path.join(save_path_dir, new_plan_filename)
+
+                    try:
+                        edited_df_new.to_csv(save_path_file, index=False)
+                        st.success(f"Zapisano plan w: `{save_path_file}`")
+                        st.info("Nowy plan będzie dostępny po odświeżeniu strony lub zmianie profilu.")
+                    except Exception as e:
+                        st.error(f"Nie udało się zapisać pliku: {e}")
+
+        # --- Interfejs dla MODYFIKACJI ISTNIEJĄCEGO PLANU ---
+        elif edit_mode == "Modyfikuj istniejący plan":
+            if not plan_file_path:
+                st.warning("Nie wybrano żadnego planu do edycji. Wybierz profil z planem w panelu bocznym.")
+            else:
+                st.markdown(f"#### Modyfikacja planu: `{os.path.basename(plan_file_path)}`")
+                st.markdown("Zmodyfikuj etapy planu poniżej. Możesz dodawać i usuwać wiersze.")
+
+                try:
+                    # Wczytujemy surowy plik, aby mieć pewność, że format czasu jest tekstowy
+                    df_to_edit = pd.read_csv(plan_file_path)
+
+                    plan_cols_config = {
+                        "Faza": st.column_config.TextColumn("Faza", required=True),
+                        "Czas": st.column_config.TextColumn("Czas (mm:ss)", required=True),
+                        "Temperatura": st.column_config.NumberColumn("Temperatura (°C)", required=True),
+                        "Nawiew": st.column_config.NumberColumn("Nawiew (0-9)"),
+                        "Moc": st.column_config.NumberColumn("Moc (0-9)")
+                    }
+
+                    edited_df_existing = st.data_editor(
+                        df_to_edit,
+                        column_config=plan_cols_config,
+                        num_rows="dynamic",
+                        use_container_width=True,
+                        key="existing_plan_editor"
+                    )
+
+                    if st.button("Zapisz zmiany w planie", type="primary"):
+                        try:
+                            edited_df_existing.to_csv(plan_file_path, index=False)
+                            st.success(f"Zaktualizowano plan: `{plan_file_path}`")
+                        except Exception as e:
+                            st.error(f"Nie udało się zapisać pliku: {e}")
+                except FileNotFoundError:
+                     st.error(f"Nie można znaleźć pliku: {plan_file_path}")
+                except Exception as e:
+                     st.error(f"Błąd wczytywania planu do edycji: {e}")
