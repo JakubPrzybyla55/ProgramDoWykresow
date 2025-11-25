@@ -169,10 +169,10 @@ else:
     # --- Ustawienia RoR ---
     with st.sidebar.expander("Ustawienia RoR"):
 
-    if not SCIPY_AVAILABLE:
-         st.sidebar.warning("Metoda Savitzky-Golay jest niedostępna (brak pakietu scipy).")
+        if not SCIPY_AVAILABLE:
+            st.sidebar.warning("Metoda Savitzky-Golay jest niedostępna (brak pakietu scipy).")
 
-    method_options = ['Średnia Ruchoma']
+        method_options = ['Średnia Ruchoma']
     if SCIPY_AVAILABLE:
         method_options.append('Savitzky-Golay')
 
@@ -745,7 +745,12 @@ else:
                         "Rzecz. Temp": round(actual_temp, 1) if actual_temp else "-",
                     })
 
-                st.table(pd.DataFrame(comparison_data))
+                comparison_df = pd.DataFrame(comparison_data)
+                # Konwersja kolumny na string, aby uniknąć błędu Arrow z mieszanymi typami
+                if 'Rzecz. Temp' in comparison_df.columns:
+                    comparison_df['Rzecz. Temp'] = comparison_df['Rzecz. Temp'].astype(str).replace('nan', '-')
+                st.table(comparison_df)
+
 
             with col2:
                 st.subheader("Metryki Faz (Średni RoR)")
