@@ -373,6 +373,17 @@ def get_roast_files(profile_name, base_path='data'):
 
     return plan_file, sorted(roast_files)
 
+def get_all_roast_files(base_path='data'):
+    """
+    Skanuje wszystkie profile i zwraca listę ścieżek do wszystkich plików wypałów.
+    """
+    all_files = []
+    profiles = get_profiles(base_path)
+    for profile in profiles:
+        _, roast_files = get_roast_files(profile, base_path)
+        all_files.extend(roast_files)
+    return all_files
+
 def calculate_thermal_dose(df, temp_col='IBTS Temp', time_col='Time_Seconds', t_base=100.0, start_time_threshold=0.0):
     """
     Oblicza skumulowaną Dawkę Termiczną.
