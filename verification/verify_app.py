@@ -23,13 +23,22 @@ def run(playwright):
     # The new chart should have title "Skumulowana Dawka Termiczna"
 
     # Check sidebar for new settings
-    expect(page.locator("text=Ustawienia Dawki Termicznej")).to_be_visible()
+    thermal_dose_expander = page.locator("text=Ustawienia Dawki Termicznej")
+    expect(thermal_dose_expander).to_be_visible()
+
+    # Click the expander to reveal the settings
+    thermal_dose_expander.click()
+    page.wait_for_timeout(500) # wait for animation
+
     expect(page.locator("text=Temperatura Bazowa (°C)")).to_be_visible()
     expect(page.locator("text=Start Obliczeń (sek)")).to_be_visible()
 
     # Scroll to the bottom to see the new chart
     # We can use locator for the title of the new chart
     dose_chart_title = page.locator("text=Skumulowana Dawka Termiczna")
+
+    # Explicitly wait for the chart to be visible before scrolling
+    expect(dose_chart_title).to_be_visible()
     dose_chart_title.scroll_into_view_if_needed()
 
     # Wait a bit for plotly to render
