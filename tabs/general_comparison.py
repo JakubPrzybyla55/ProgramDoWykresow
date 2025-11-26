@@ -1,10 +1,20 @@
 import streamlit as st
 import pandas as pd
 import os
+import glob
 import plotly.graph_objects as go
-import plotly.colors as pcolors
+from utils import (
+    get_all_roast_files,
+    parse_roasttime_csv,
+    calculate_thermal_dose,
+    get_agtron,
+    get_plan_metadata,
+    calculate_thermal_dose_arrhenius
+)
 
-from utils import get_all_roast_files, parse_roasttime_csv, calculate_thermal_dose, get_agtron
+def get_all_plan_files(base_path='data'):
+    """Skanuje wszystkie profile i zwraca listę ścieżek do plików planów."""
+    return glob.glob(os.path.join(base_path, '*', 'Plan', '*.csv'))
 
 def render(
     st,
@@ -12,72 +22,95 @@ def render(
     dose_t_base: float,
     dose_start_time: float
 ):
-    """Renders the General Comparison Tab."""
-    st.subheader("Porównanie Wszystkich Wypałów (Wszystkie Profile)")
+    """Renderuje zakładkę Ogólne Porównanie Wypałów."""
+    st.subheader("Ogólne Porównanie Dawki Termicznej vs Kolor")
 
     all_roast_files = get_all_roast_files(base_data_path)
+    all_plan_files = get_all_plan_files(base_data_path)
 
     if not all_roast_files:
         st.info("Brak plików wypałów do analizy w żadnym z profili.")
         return
+    if not all_plan_files:
+        st.warning("Nie znaleziono żadnych plików planów. Nie można wybrać stałych do obliczeń.")
+        return
 
-    all_roasts_data = []
-    progress_bar = st.progress(0, text="Przetwarzanie wszystkich wypałów...")
-    colors_cycle = pcolors.qualitative.Plotly
-    fig_all_dose = go.Figure()
+    # --- Wybór planu jako źródła stałych ---
+    plan_options = {os.path.basename(p): p for p in all_plan_files}
+    selected_plan_name = st.selectbox(
+        "Wybierz plan, aby użyć jego zapisanych stałych do obliczeń dawki",
+        list(plan_options.keys())
+    )
 
-    for i, r_path in enumerate(all_roast_files):
+    plan_metadata = get_plan_metadata(selected_plan_name)
+    const_A = float(plan_metadata.get('A', 0.788))
+    const_Ea = float(plan_metadata.get('Ea', 26.02))
+    const_R = float(plan_metadata.get('R', 0.008314))
+
+    st.info(f"Używane stałe z planu '{selected_plan_name}': A={const_A:.4f}, Ea={const_Ea:.3f}, R={const_R:.6f}")
+
+    # --- Obliczenia dawek ---
+    all_data = []
+
+    selected_files = st.multiselect(
+        "Wybierz wypały do porównania (domyślnie wszystkie)",
+        options=[os.path.basename(p) for p in all_roast_files],
+        default=[os.path.basename(p) for p in all_roast_files]
+    )
+
+    roast_path_map = {os.path.basename(p): p for p in all_roast_files}
+    files_to_process = [roast_path_map[name] for name in selected_files if name in roast_path_map]
+
+    for r_path in files_to_process:
         f_name = os.path.basename(r_path)
-        try:
-            profile_name_from_path = os.path.basename(os.path.dirname(os.path.dirname(r_path)))
-        except:
-            profile_name_from_path = "Nieznany"
-
+        profile_name = os.path.basename(os.path.dirname(os.path.dirname(r_path)))
         try:
             r_df, _ = parse_roasttime_csv(r_path)
-            if 'IBTS Temp' in r_df.columns:
-                r_df = calculate_thermal_dose(r_df, temp_col='IBTS Temp', time_col='Time_Seconds', t_base=dose_t_base, start_time_threshold=dose_start_time)
-                if 'Thermal_Dose' in r_df.columns:
-                    final_dose = r_df['Thermal_Dose'].iloc[-1]
-                    duration = r_df['Time_Seconds'].iloc[-1]
-                    agtron_val = get_agtron(os.path.join(base_data_path, profile_name_from_path), f_name) or 0.0
-                    all_roasts_data.append({
-                        "Profil": profile_name_from_path, "Nazwa Pliku": f_name, "Agtron": agtron_val,
-                        "Całkowita Dawka": final_dose, "Czas Trwania": f"{int(duration//60)}:{int(duration%60):02d}",
-                    })
-                    color_idx = i % len(colors_cycle)
-                    fig_all_dose.add_trace(go.Scatter(
-                        x=r_df['Time_Seconds'], y=r_df['Thermal_Dose'], mode='lines',
-                        name=f"{profile_name_from_path} / {f_name}",
-                        line=dict(color=colors_cycle[color_idx], width=2), opacity=0.8,
-                        hovertemplate=f"<b>{f_name}</b><br>Czas: %{{x:.0f}}s<br>Dawka: %{{y:.0f}}<extra></extra>"
-                    ))
+            agtron_val = get_agtron(os.path.join(base_data_path, profile_name), f_name)
+            if agtron_val is None: continue
+
+            r_df = calculate_thermal_dose(r_df, temp_col='IBTS Temp', time_col='Time_Seconds', t_base=dose_t_base, start_time_threshold=dose_start_time)
+            r_df = calculate_thermal_dose_arrhenius(r_df, temp_col='IBTS Temp', time_col='Time_Seconds', A=const_A, Ea=const_Ea, R=const_R, start_time_threshold=dose_start_time)
+
+            all_data.append({
+                'Label': f"{profile_name} / {f_name.replace('.csv','')} ({agtron_val:.1f})",
+                'Agtron': agtron_val,
+                'Dose_Old': r_df['Thermal_Dose'].iloc[-1],
+                'Dose_New': r_df['Thermal_Dose_Arrhenius'].iloc[-1]
+            })
         except Exception as e:
-            print(f"Błąd przetwarzania {f_name} dla symulacji ogólnej: {e}")
-        progress_bar.progress((i + 1) / len(all_roast_files))
+            print(f"Błąd przetwarzania {f_name}: {e}")
 
-    progress_bar.empty()
+    # --- Wizualizacja ---
+    if not all_data:
+        st.warning("Brak danych do wyświetlenia. Upewnij się, że wybrane wypały mają przypisany kolor Agtron.")
+        return
 
-    fig_all_dose.update_layout(
-        template="plotly_dark", height=600, title="Krzywe Skumulowanej Dawki Termicznej (Wszystkie Profile)",
-        xaxis_title="Czas (sekundy)", yaxis_title="Dawka Termiczna", hovermode="closest",
-        margin=dict(t=50, b=0, l=0, r=0)
+    df_plot = pd.DataFrame(all_data).sort_values(by="Agtron", ascending=False)
+
+    fig = go.Figure()
+    fig.add_trace(go.Bar(
+        x=df_plot['Label'],
+        y=df_plot['Dose_Old'],
+        name='Dawka (Model Oryginalny)',
+        marker_color='indianred',
+        hovertemplate="<b>%{x}</b><br>Dawka (Oryg.): %{y:.0f}<extra></extra>"
+    ))
+    fig.add_trace(go.Bar(
+        x=df_plot['Label'],
+        y=df_plot['Dose_New'],
+        name='Dawka (Model Arrhenius)',
+        marker_color='lightsalmon',
+        hovertemplate="<b>%{x}</b><br>Dawka (Arrhenius): %{y:.0f}<extra></extra>"
+    ))
+
+    fig.update_layout(
+        barmode='group',
+        template="plotly_dark",
+        title="Porównanie Dawki Termicznej (dwa modele)",
+        xaxis_title="Wypał / Profil (Kolor Agtron)",
+        yaxis_title="Skumulowana Dawka Termiczna",
+        height=600,
+        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1)
     )
-    st.plotly_chart(fig_all_dose, use_container_width=True)
-
-    if all_roasts_data:
-        st.subheader("Dane Zbiorcze (Wszystkie Profile)")
-        df_all = pd.DataFrame(all_roasts_data).sort_values(by="Agtron", ascending=False)
-        st.dataframe(
-            df_all,
-            column_config={
-                "Profil": st.column_config.TextColumn("Profil"),
-                "Nazwa Pliku": st.column_config.TextColumn("Plik"),
-                "Agtron": st.column_config.NumberColumn("Kolor (Agtron)", format="%.1f"),
-                "Całkowita Dawka": st.column_config.NumberColumn("Dawka Total", format="%.0f"),
-                "Czas Trwania": st.column_config.TextColumn("Czas"),
-            },
-            use_container_width=True, hide_index=True
-        )
-    else:
-        st.warning("Nie udało się obliczyć dawki dla żadnego pliku.")
+    st.plotly_chart(fig, use_container_width=True)
