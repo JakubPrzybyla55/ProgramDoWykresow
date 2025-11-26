@@ -286,6 +286,124 @@ def set_agtron(profile_path, roast_filename, value):
     data['agtron'][roast_filename] = value
     save_metadata(profile_path, data)
 
+# --- Zarządzanie metadanymi planów ---
+PLANS_METADATA_PATH = 'data/plans_metadata.csv'
+
+def load_plans_metadata():
+    """Wczytuje metadane planów z pliku CSV. Jeśli plik nie istnieje, tworzy pusty DataFrame."""
+    if not os.path.exists(PLANS_METADATA_PATH):
+        return pd.DataFrame(columns=['plan_name', 'agtron', 'A', 'Ea', 'R'])
+    try:
+        return pd.read_csv(PLANS_METADATA_PATH)
+    except pd.errors.EmptyDataError:
+        return pd.DataFrame(columns=['plan_name', 'agtron', 'A', 'Ea', 'R'])
+
+
+def save_plans_metadata(df):
+    """Zapisuje metadane planów do pliku CSV."""
+    os.makedirs(os.path.dirname(PLANS_METADATA_PATH), exist_ok=True)
+    df.to_csv(PLANS_METADATA_PATH, index=False)
+
+
+def get_plan_metadata(plan_name):
+    """Pobiera metadane dla konkretnego planu, zwracając domyślne wartości, jeśli brak wpisu."""
+    df = load_plans_metadata()
+    plan_data = df[df['plan_name'] == plan_name]
+
+    if not plan_data.empty:
+        return plan_data.iloc[0].to_dict()
+    else:
+        # Zwraca słownik z domyślnymi wartościami
+        return {
+            'plan_name': plan_name,
+            'agtron': 85.0,
+            'A': 0.788,
+            'Ea': 26.02,
+            'R': 0.008314
+        }
+
+def update_plan_metadata(plan_name, new_data):
+    """Aktualizuje lub dodaje metadane dla konkretnego planu."""
+    df = load_plans_metadata()
+    plan_exists = df['plan_name'] == plan_name
+
+    if plan_exists.any():
+        # Aktualizuje istniejący wiersz
+        for key, value in new_data.items():
+            df.loc[plan_exists, key] = value
+    else:
+        # Dodaje nowy wiersz
+        new_row = {'plan_name': plan_name, **new_data}
+        new_df = pd.DataFrame([new_row])
+        df = pd.concat([df, new_df], ignore_index=True)
+
+    save_plans_metadata(df)
+
+
+def calculate_thermal_dose_arrhenius(df, temp_col='IBTS Temp', time_col='Time_Seconds', A=0.788, Ea=26.02, R=0.008314, start_time_threshold=0.0):
+    """Oblicza skumulowaną Dawkę Termiczną modelem Arrheniusa."""
+    if df.empty or time_col not in df.columns or temp_col not in df.columns:
+        return df
+
+    df = df.copy()
+    suffix = "_Probe" if "Probe" in temp_col else ""
+    result_col = f'Thermal_Dose_Arrhenius{suffix}'
+    df[result_col] = np.nan
+
+    df_calc = df[df[time_col] >= start_time_threshold].copy()
+    if df_calc.empty:
+        df[result_col] = 0.0
+        return df
+
+    df_calc = df_calc.sort_values(by=time_col)
+    df_calc['delta_t'] = df_calc[time_col].diff().fillna(0)
+
+    # Użycie średniej temperatury w interwale dla większej dokładności
+    temp_avg_celsius = ((df_calc[temp_col] + df_calc[temp_col].shift(1)) / 2).fillna(df_calc[temp_col])
+    temp_avg_kelvin = temp_avg_celsius + 273.15
+
+    # Obliczenie k(T)
+    k_T = A * np.exp(-Ea / (R * temp_avg_kelvin))
+
+    increments = k_T * df_calc['delta_t']
+    df.loc[df_calc.index, result_col] = increments.cumsum()
+    df[result_col] = df[result_col].fillna(0.0)
+
+    return df
+
+def get_milestone_data_for_table(df, milestones, time_col, temp_col, dose_col, model_params=None, t_base=100.0):
+    """Przygotowuje dane do tabeli z krokami obliczeń dla kamieni milowych."""
+    table_data = []
+
+    for name, time in milestones.items():
+        if time is None: continue
+
+        # Znajdź najbliższy wiersz w DataFrame do czasu kamienia milowego
+        row = df.iloc[(df[time_col] - time).abs().argsort()[:1]]
+        if row.empty: continue
+
+        temp = row[temp_col].values[0]
+        dose = row[dose_col].values[0]
+
+        if model_params: # Model Arrheniusa
+            A, Ea, R = model_params['A'], model_params['Ea'], model_params['R']
+            temp_k = temp + 273.15
+            formula = "k(T) = A * e^(-Ea / (R * T))"
+            values = f"k({temp:.1f}°C) = {A} * e^(-{Ea} / ({R} * {temp_k:.2f}))"
+        else: # Model oryginalny
+            formula = "V(T) = 2^((T - T_base) / 10)"
+            values = f"V({temp:.1f}°C) = 2^(({temp:.1f} - {t_base}) / 10)"
+
+        table_data.append({
+            "Krok": name,
+            "Wzór": formula,
+            "Wzór z Wartościami": values,
+            "Skumulowana Dawka w tym punkcie": f"{dose:.2f}"
+        })
+
+    return pd.DataFrame(table_data)
+
+
 # --- Funkcje pomocnicze do wykresów ---
 
 def add_l_projection(fig, x_val, y_val, color, row=1, col=1, is_time_x=True, show_y=True, show_x=True, text_offset_y=0):
