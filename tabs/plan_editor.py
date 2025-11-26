@@ -1,14 +1,9 @@
 import streamlit as st
 import pandas as pd
 import os
+from state import AppState
 
-def render(
-    st,
-    profiles: list,
-    selected_profile: str,
-    base_data_path: str,
-    plan_file_path: str
-):
+def render(st: object, state: AppState):
     """Renders the Plan Editor Tab."""
     st.subheader("Edytor Planu Wypału")
 
@@ -32,8 +27,8 @@ def render(
         with col1:
             new_plan_profile = st.selectbox(
                 "Wybierz profil, do którego dodać nowy plan",
-                options=profiles,
-                index=profiles.index(selected_profile) if selected_profile in profiles else 0,
+                options=state.profiles,
+                index=state.profiles.index(state.selected_profile) if state.selected_profile in state.profiles else 0,
                 key="new_plan_profile_select"
             )
         with col2:
@@ -58,7 +53,7 @@ def render(
             elif not new_plan_filename.endswith('.csv'):
                 st.error("Nazwa pliku musi kończyć się na `.csv`.")
             else:
-                save_path_dir = os.path.join(base_data_path, new_plan_profile, 'Plan')
+                save_path_dir = os.path.join(state.base_data_path, new_plan_profile, 'Plan')
                 os.makedirs(save_path_dir, exist_ok=True)
                 save_path_file = os.path.join(save_path_dir, new_plan_filename)
                 try:
@@ -69,21 +64,21 @@ def render(
                     st.error(f"Nie udało się zapisać pliku: {e}")
 
     elif edit_mode == "Modyfikuj istniejący plan":
-        if not plan_file_path:
+        if not state.plan_file_path:
             st.warning("Nie wybrano żadnego planu do edycji. Wybierz profil z planem w panelu bocznym.")
         else:
-            st.markdown(f"#### Modyfikacja planu: `{os.path.basename(plan_file_path)}`")
+            st.markdown(f"#### Modyfikacja planu: `{os.path.basename(state.plan_file_path)}`")
             st.markdown("Zmodyfikuj etapy planu poniżej. Możesz dodawać i usuwać wiersze.")
             try:
-                df_to_edit = pd.read_csv(plan_file_path)
+                df_to_edit = pd.read_csv(state.plan_file_path)
                 edited_df_existing = st.data_editor(df_to_edit, column_config=plan_cols_config, num_rows="dynamic", use_container_width=True, key="existing_plan_editor")
                 if st.button("Zapisz zmiany w planie", type="primary"):
                     try:
-                        edited_df_existing.to_csv(plan_file_path, index=False)
-                        st.success(f"Zaktualizowano plan: `{plan_file_path}`")
+                        edited_df_existing.to_csv(state.plan_file_path, index=False)
+                        st.success(f"Zaktualizowano plan: `{state.plan_file_path}`")
                     except Exception as e:
                         st.error(f"Nie udało się zapisać pliku: {e}")
             except FileNotFoundError:
-                 st.error(f"Nie można znaleźć pliku: {plan_file_path}")
+                 st.error(f"Nie można znaleźć pliku: {state.plan_file_path}")
             except Exception as e:
                  st.error(f"Błąd wczytywania planu do edycji: {e}")

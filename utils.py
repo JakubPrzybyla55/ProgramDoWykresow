@@ -13,7 +13,7 @@ except ImportError:
     SCIPY_AVAILABLE = False
     savgol_filter = None
 
-def parse_time_to_seconds(time_str):
+def parsuj_czas_do_sekund(time_str):
     """Konwertuje ciąg czasu 'mm:ss' na sekundy (float)."""
     try:
         if pd.isna(time_str) or str(time_str).strip() in ['-', '', 'nan']:
@@ -27,140 +27,149 @@ def parse_time_to_seconds(time_str):
     except Exception:
         return None
 
-def parse_roasttime_csv(file):
-    """
-    Parsuje plik CSV RoastTime.
-    Zwraca:
-        df: DataFrame z danymi szeregów czasowych.
-        milestones: Słownik rzeczywistych zdarzeń {NazwaZdarzenia: CzasSekundy}.
-    """
-    content = ""
+def _wczytaj_zawartosc_pliku(file):
+    """Wczytuje zawartość pliku z różnych źródeł (ścieżka, obiekt plikopodobny)."""
     try:
-        # Streamlit UploadedFile
-        if hasattr(file, 'getvalue'):
+        if hasattr(file, 'getvalue'):  # Streamlit UploadedFile
             val = file.getvalue()
-            if isinstance(val, bytes):
-                content = val.decode('utf-8')
-            else:
-                content = val
-        # String path
-        elif isinstance(file, str):
+            return val.decode('utf-8') if isinstance(val, bytes) else val
+        elif isinstance(file, str):  # Ścieżka do pliku
             if not os.path.exists(file):
                 raise FileNotFoundError(f"Plik nie znaleziony: {file}")
             with open(file, 'r', encoding='utf-8') as f:
-                content = f.read()
-        # StringIO/File-like
-        elif hasattr(file, 'read'):
-            data = file.read()
-            if isinstance(data, bytes):
-                content = data.decode('utf-8')
-            else:
-                content = data
+                return f.read()
+        elif hasattr(file, 'read'):  # Obiekt plikopodobny (np. StringIO)
+            val = file.read()
+            return val.decode('utf-8') if isinstance(val, bytes) else val
     except Exception as e:
         raise ValueError(f"Nie udało się odczytać pliku: {e}")
+    return ""
 
-    lines = content.split('\n')
-
-    # --- Parsowanie kamieni milowych (sekcja metadanych) ---
+def _parsuj_metadane_roasttime(lines):
+    """Parsuje metadane (kamienie milowe) z linii pliku RoastTime."""
     milestones = {}
     timeline_index = -1
-
     for i, line in enumerate(lines):
         if line.startswith("Timeline"):
             timeline_index = i
             break
 
-        # Parsowanie Yellowing (Żółknięcie)
-        if "Yellowing" in line:
-            if i + 1 < len(lines):
+        # Parsowanie Yellowing
+        if "Yellowing" in line and i + 1 < len(lines):
+            try:
                 headers = line.split(',')
-                next_line = lines[i+1]
-                parts = next_line.split(',')
-                try:
-                    if "Start time" in headers:
-                        idx = headers.index("Start time")
-                    else:
-                        idx = 2
+                parts = lines[i+1].split(',')
+                idx = headers.index("Start time") if "Start time" in headers else 2
+                if idx < len(parts) and (t := parsuj_czas_do_sekund(parts[idx])):
+                    milestones['Yellowing'] = t
+            except (ValueError, IndexError):
+                continue
 
-                    if idx < len(parts):
-                        t = parse_time_to_seconds(parts[idx])
-                        if t is not None:
-                            milestones['Yellowing'] = t
-                except ValueError:
-                    pass
-
-        # Parsowanie 1st Crack (Pierwsze Pęknięcie)
-        if "1st Crack" in line:
-            if i + 2 < len(lines):
-                data_line = lines[i+2]
-                parts = data_line.split(',')
-                try:
-                     t = parse_time_to_seconds(parts[2])
-                     if t is not None:
-                         milestones['1st Crack'] = t
-                except IndexError:
-                    pass
+        # Parsowanie 1st Crack
+        if "1st Crack" in line and i + 2 < len(lines):
+            try:
+                parts = lines[i+2].split(',')
+                if len(parts) > 2 and (t := parsuj_czas_do_sekund(parts[2])):
+                    milestones['1st Crack'] = t
+            except (ValueError, IndexError):
+                continue
 
     if timeline_index == -1:
         raise ValueError("Nie można znaleźć nagłówka 'Timeline' w pliku CSV.")
+    return milestones, timeline_index
 
-    # --- Parsowanie danych osi czasu ---
-    header_index = timeline_index + 1
+def _parsuj_dane_szeregu_czasowego(lines, start_index):
+    """Parsuje dane tabelaryczne z pliku RoastTime."""
     header_keywords = ['temp', 'time', 'czas', 'ibts', 'probe', 'ror']
+    header_index = -1
 
-    for j in range(timeline_index, min(timeline_index + 5, len(lines))):
-        line = lines[j]
-        line_lower = line.lower()
-        has_separator = ',' in line or ';' in line
-        has_keyword = any(k in line_lower for k in header_keywords)
-        if has_separator and has_keyword:
-            header_index = j
+    for i in range(start_index, min(start_index + 5, len(lines))):
+        line_lower = lines[i].lower()
+        if (',' in line_lower or ';' in line_lower) and any(k in line_lower for k in header_keywords):
+            header_index = i
             break
+
+    if header_index == -1:
+        raise ValueError("Nie udało się zlokalizować nagłówka danych w sekcji 'Timeline'.")
 
     csv_data = "\n".join(lines[header_index:])
     try:
-        df = pd.read_csv(io.StringIO(csv_data), sep=None, engine='python')
-    except:
-        df = pd.read_csv(io.StringIO(csv_data))
+        df = pd.read_csv(io.StringIO(csv_data), sep=None, engine='python', on_bad_lines='skip')
+    except Exception as e:
+        raise ValueError(f"Błąd parsowania danych CSV: {e}")
 
     df.columns = df.columns.str.strip()
-    columns_to_map = ['Time', 'IBTS Temp', 'IBTS ROR', 'Bean Probe Temp', 'Bean Probe ROR', 'Fan', 'Power']
-    for col in columns_to_map:
-        if col not in df.columns:
-            for actual_col in df.columns:
-                if col.lower() in actual_col.lower():
-                    df.rename(columns={actual_col: col}, inplace=True)
-                    break
-    if 'Time' not in df.columns:
-        cols = ", ".join(df.columns.tolist())
-        raise ValueError(f"Nie znaleziono kolumny 'Time' w pliku CSV. Dostępne kolumny: {cols}")
-    df['Time_Seconds'] = df['Time'].apply(parse_time_to_seconds)
 
-    cols_to_numeric = ['IBTS Temp', 'IBTS ROR', 'Bean Probe Temp', 'Bean Probe ROR', 'Fan', 'Power']
+    # Mapowanie kolumn
+    column_map = {
+        'Time': ['Time', 'Czas'],
+        'IBTS Temp': ['IBTS Temp'],
+        'IBTS ROR': ['IBTS ROR'],
+        'Bean Probe Temp': ['Bean Probe Temp'],
+        'Bean Probe ROR': ['Bean Probe ROR'],
+        'Fan': ['Fan'],
+        'Power': ['Power']
+    }
+
+    for target_col, possible_names in column_map.items():
+        if target_col not in df.columns:
+            for p_name in possible_names:
+                for actual_col in df.columns:
+                    if p_name.lower() in actual_col.lower():
+                        df.rename(columns={actual_col: target_col}, inplace=True)
+                        break
+                if target_col in df.columns:
+                    break
+
+    if 'Time' not in df.columns:
+        raise ValueError(f"Nie znaleziono kolumny 'Time'. Dostępne kolumny: {', '.join(df.columns)}")
+
+    df['Time_Seconds'] = df['Time'].apply(parsuj_czas_do_sekund)
+
+    cols_to_numeric = [col for col in column_map.keys() if col != 'Time']
     for col in cols_to_numeric:
         if col in df.columns:
             df[col] = pd.to_numeric(df[col], errors='coerce')
-    if not df.empty and 'Time_Seconds' in df.iloc[-1]:
-         milestones['Drop'] = df.iloc[-1]['Time_Seconds']
+
+    return df
+
+def parsuj_csv_roasttime(file):
+    """
+    Parsuje plik CSV RoastTime, delegując zadania do funkcji pomocniczych.
+    Zwraca:
+        df: DataFrame z danymi szeregów czasowych.
+        milestones: Słownik rzeczywistych zdarzeń {NazwaZdarzenia: CzasSekundy}.
+    """
+    content = _wczytaj_zawartosc_pliku(file)
+    lines = content.split('\n')
+
+    milestones, timeline_index = _parsuj_metadane_roasttime(lines)
+    df = _parsuj_dane_szeregu_czasowego(lines, timeline_index)
+
+    # Uzupełnienie 'Drop'
+    if not df.empty and 'Time_Seconds' in df.columns and pd.notna(df['Time_Seconds'].iloc[-1]):
+         milestones['Drop'] = df['Time_Seconds'].iloc[-1]
+
     return df, milestones
 
-def parse_profile_csv(file):
+def parsuj_csv_profilu(file):
     """Parsuje plik CSV Profilu (Planu)."""
     try:
         df = pd.read_csv(file)
+        df.columns = df.columns.str.strip()
+        if 'Czas' in df.columns:
+            df['Time_Seconds'] = df['Czas'].apply(parsuj_czas_do_sekund)
+        elif 'Time' in df.columns:
+            df['Time_Seconds'] = df['Time'].apply(parsuj_czas_do_sekund)
+        else:
+            raise ValueError("Plik CSV profilu musi zawierać kolumnę 'Czas' lub 'Time'.")
+        return df
+    except FileNotFoundError:
+        raise FileNotFoundError(f"Nie znaleziono pliku planu: {file}")
     except Exception as e:
-        raise ValueError(f"Nie udało się odczytać pliku profilu: {e}")
+        raise ValueError(f"Błąd w parsowaniu pliku planu: {e}")
 
-    df.columns = df.columns.str.strip()
-    if 'Czas' in df.columns:
-        df['Time_Seconds'] = df['Czas'].apply(parse_time_to_seconds)
-    elif 'Time' in df.columns:
-        df['Time_Seconds'] = df['Time'].apply(parse_time_to_seconds)
-    else:
-        raise ValueError("Plik CSV profilu musi zawierać kolumnę 'Czas' lub 'Time'.")
-    return df
-
-def calculate_ror(df, temp_col='IBTS Temp', time_col='Time_Seconds'):
+def oblicz_ror(df, temp_col='IBTS Temp', time_col='Time_Seconds'):
     """Oblicza RoR (Szybkość Wzrostu) metodą prostej różnicy."""
     if df.empty or time_col not in df.columns or temp_col not in df.columns:
         return df
@@ -171,7 +180,7 @@ def calculate_ror(df, temp_col='IBTS Temp', time_col='Time_Seconds'):
     df[f'Calc_RoR{suffix}'] = (delta_temp / delta_time) * 60
     return df
 
-def calculate_ror_sg(df, temp_col='IBTS Temp', time_col='Time_Seconds', window_length=15, polyorder=2, deriv=1):
+def oblicz_ror_sg(df, temp_col='IBTS Temp', time_col='Time_Seconds', window_length=15, polyorder=2, deriv=1):
     """Oblicza RoR przy użyciu filtra Savitzky'ego-Golaya."""
     suffix = "_Probe" if "Probe" in temp_col else ""
     col_name = f'Calc_RoR_SG{suffix}'
@@ -198,23 +207,30 @@ def calculate_ror_sg(df, temp_col='IBTS Temp', time_col='Time_Seconds', window_l
         df[col_name] = 0
     return df
 
-def smooth_data(series, window=30):
+def wygladz_dane(series, window=30):
     """Wygładza dane używając średniej ruchomej."""
     if window < 1: window = 1
     return series.rolling(window=window, min_periods=1, center=True).mean()
 
-def get_profiles(base_path='data'):
+def pobierz_profile(base_path='data'):
     """Skanuje base_path i zwraca listę nazw profili."""
     if not os.path.exists(base_path): return []
     return sorted([d for d in os.listdir(base_path) if os.path.isdir(os.path.join(base_path, d))])
 
-def get_roast_files(profile_name, base_path='data'):
+def pobierz_pliki_wypalow(profile_name, base_path='data'):
     """Zwraca ścieżkę do pliku planu i listę ścieżek do plików wypałów."""
     profile_dir = os.path.join(base_path, profile_name)
     plan_dir = os.path.join(profile_dir, 'Plan')
-    wypaly_dir = os.path.join(profile_dir, 'Wypaly')
-    if not os.path.exists(wypaly_dir) and os.path.exists(os.path.join(profile_dir, 'Wypały')):
-        wypaly_dir = os.path.join(profile_dir, 'Wypały')
+
+    # Sprawdza obie możliwe nazwy katalogu
+    wypaly_dir_standard = os.path.join(profile_dir, 'Wypaly')
+    wypaly_dir_pl = os.path.join(profile_dir, 'Wypały')
+
+    wypaly_dir = None
+    if os.path.exists(wypaly_dir_pl):
+        wypaly_dir = wypaly_dir_pl
+    elif os.path.exists(wypaly_dir_standard):
+        wypaly_dir = wypaly_dir_standard
 
     plan_file = None
     if os.path.exists(plan_dir):
@@ -226,15 +242,15 @@ def get_roast_files(profile_name, base_path='data'):
         roast_files = [os.path.join(wypaly_dir, f) for f in os.listdir(wypaly_dir) if f.endswith('.csv')]
     return plan_file, sorted(roast_files)
 
-def get_all_roast_files(base_path='data'):
+def pobierz_wszystkie_pliki_wypalow(base_path='data'):
     """Skanuje wszystkie profile i zwraca listę ścieżek do wszystkich plików wypałów."""
     all_files = []
-    for profile in get_profiles(base_path):
-        _, roast_files = get_roast_files(profile, base_path)
+    for profile in pobierz_profile(base_path):
+        _, roast_files = pobierz_pliki_wypalow(profile, base_path)
         all_files.extend(roast_files)
     return all_files
 
-def calculate_thermal_dose(df, temp_col='IBTS Temp', time_col='Time_Seconds', t_base=100.0, start_time_threshold=0.0):
+def oblicz_dawke_termiczna(df, temp_col='IBTS Temp', time_col='Time_Seconds', t_base=100.0, start_time_threshold=0.0):
     """Oblicza skumulowaną Dawkę Termiczną."""
     if df.empty or time_col not in df.columns or temp_col not in df.columns:
         return df
@@ -255,7 +271,7 @@ def calculate_thermal_dose(df, temp_col='IBTS Temp', time_col='Time_Seconds', t_
     df[result_col] = df[result_col].fillna(0.0)
     return df
 
-def load_metadata(profile_path):
+def wczytaj_metadane(profile_path):
     """Wczytuje metadata.json z folderu profilu."""
     meta_path = os.path.join(profile_path, 'metadata.json')
     if not os.path.exists(meta_path): return {}
@@ -266,7 +282,7 @@ def load_metadata(profile_path):
         print(f"Błąd wczytywania metadata.json: {e}")
         return {}
 
-def save_metadata(profile_path, data):
+def zapisz_metadane(profile_path, data):
     """Zapisuje słownik data do metadata.json w folderze profilu."""
     meta_path = os.path.join(profile_path, 'metadata.json')
     try:
@@ -275,21 +291,21 @@ def save_metadata(profile_path, data):
     except Exception as e:
         print(f"Błąd zapisu metadata.json: {e}")
 
-def get_agtron(profile_path, roast_filename):
+def pobierz_agtron(profile_path, roast_filename):
     """Pobiera wartość Agtron dla danego pliku wypału."""
-    return load_metadata(profile_path).get('agtron', {}).get(roast_filename)
+    return wczytaj_metadane(profile_path).get('agtron', {}).get(roast_filename)
 
-def set_agtron(profile_path, roast_filename, value):
+def ustaw_agtron(profile_path, roast_filename, value):
     """Ustawia wartość Agtron dla danego pliku wypału."""
-    data = load_metadata(profile_path)
+    data = wczytaj_metadane(profile_path)
     if 'agtron' not in data: data['agtron'] = {}
     data['agtron'][roast_filename] = value
-    save_metadata(profile_path, data)
+    zapisz_metadane(profile_path, data)
 
 # --- Zarządzanie metadanymi planów ---
 PLANS_METADATA_PATH = 'data/plans_metadata.csv'
 
-def load_plans_metadata():
+def wczytaj_metadane_planow():
     """Wczytuje metadane planów z pliku CSV. Jeśli plik nie istnieje, tworzy pusty DataFrame."""
     if not os.path.exists(PLANS_METADATA_PATH):
         return pd.DataFrame(columns=['plan_name', 'agtron', 'A', 'Ea', 'R'])
@@ -299,15 +315,15 @@ def load_plans_metadata():
         return pd.DataFrame(columns=['plan_name', 'agtron', 'A', 'Ea', 'R'])
 
 
-def save_plans_metadata(df):
+def zapisz_metadane_planow(df):
     """Zapisuje metadane planów do pliku CSV."""
     os.makedirs(os.path.dirname(PLANS_METADATA_PATH), exist_ok=True)
     df.to_csv(PLANS_METADATA_PATH, index=False)
 
 
-def get_plan_metadata(plan_name):
+def pobierz_metadane_planu(plan_name):
     """Pobiera metadane dla konkretnego planu, zwracając domyślne wartości, jeśli brak wpisu."""
-    df = load_plans_metadata()
+    df = wczytaj_metadane_planow()
     plan_data = df[df['plan_name'] == plan_name]
 
     if not plan_data.empty:
@@ -322,9 +338,9 @@ def get_plan_metadata(plan_name):
             'R': 0.008314
         }
 
-def update_plan_metadata(plan_name, new_data):
+def aktualizuj_metadane_planu(plan_name, new_data):
     """Aktualizuje lub dodaje metadane dla konkretnego planu."""
-    df = load_plans_metadata()
+    df = wczytaj_metadane_planow()
     plan_exists = df['plan_name'] == plan_name
 
     if plan_exists.any():
@@ -337,10 +353,10 @@ def update_plan_metadata(plan_name, new_data):
         new_df = pd.DataFrame([new_row])
         df = pd.concat([df, new_df], ignore_index=True)
 
-    save_plans_metadata(df)
+    zapisz_metadane_planow(df)
 
 
-def calculate_thermal_dose_arrhenius(df, temp_col='IBTS Temp', time_col='Time_Seconds', A=0.788, Ea=26.02, R=0.008314, start_time_threshold=0.0):
+def oblicz_dawke_termiczna_arrhenius(df, temp_col='IBTS Temp', time_col='Time_Seconds', A=0.788, Ea=26.02, R=0.008314, start_time_threshold=0.0):
     """Oblicza skumulowaną Dawkę Termiczną modelem Arrheniusa."""
     if df.empty or time_col not in df.columns or temp_col not in df.columns:
         return df
@@ -374,7 +390,7 @@ def calculate_thermal_dose_arrhenius(df, temp_col='IBTS Temp', time_col='Time_Se
 
 # --- Funkcje pomocnicze do wykresów ---
 
-def add_l_projection(fig, x_val, y_val, color, row=1, col=1, is_time_x=True, show_y=True, show_x=True, text_offset_y=0):
+def dodaj_projekcje_l(fig, x_val, y_val, color, row=1, col=1, is_time_x=True, show_y=True, show_x=True, text_offset_y=0):
     """Dodaje projekcje w kształcie litery 'L' do wykresu."""
     y_axis_name, x_axis_name = f"y{row}" if row > 1 else "y", f"x{col}" if col > 1 else "x"
     yref_domain, xref_domain = f"{y_axis_name} domain", f"{x_axis_name} domain"
@@ -391,7 +407,7 @@ def add_l_projection(fig, x_val, y_val, color, row=1, col=1, is_time_x=True, sho
     if show_y and y_val is not None:
         fig.add_annotation(x=0, y=y_val, xref=xref_domain, yref=y_axis_name, text=f"{y_val:.1f}", showarrow=False, font=dict(size=10, color=color), xshift=-25, xanchor="right", bgcolor="rgba(0,0,0,0.5)")
 
-def add_settings_subplot(fig_main, actual_df: pd.DataFrame, plan_df: pd.DataFrame, show_plan: bool, row_idx=2):
+def dodaj_subplot_ustawien(fig_main, actual_df: pd.DataFrame, plan_df: pd.DataFrame, show_plan: bool, row_idx=2):
     """Dodaje subplot z ustawieniami (Moc/Nawiew)."""
     if not actual_df.empty:
         if 'Fan' in actual_df.columns:

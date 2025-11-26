@@ -6,44 +6,26 @@ from plotly.subplots import make_subplots
 import traceback
 
 from utils import (
-    parse_roasttime_csv,
-    calculate_ror,
-    calculate_ror_sg,
-    calculate_thermal_dose,
-    smooth_data,
-    add_l_projection,
-    add_settings_subplot,
+    parsuj_csv_roasttime,
+    oblicz_ror,
+    oblicz_ror_sg,
+    oblicz_dawke_termiczna,
+    wygladz_dane,
+    dodaj_projekcje_l,
+    dodaj_subplot_ustawien,
 )
+from state import AppState
 
-def render(
-    st,
-    selected_profile: str,
-    plan_df: pd.DataFrame,
-    selected_roast_path: str,
-    show_plan: bool,
-    show_ibts: bool,
-    show_probe: bool,
-    ror_y_min: int,
-    ror_y_max: int,
-    settings_y_min: int,
-    settings_y_max: int,
-    ror_method_ibts: str,
-    ibts_params: dict,
-    ror_method_probe: str,
-    probe_params: dict,
-    dose_t_base: float,
-    dose_start_time: float,
-    poly_degree: int
-):
+def render(st: object, state: AppState):
     """Renders the Plan Analysis Tab."""
 
     # Przetwarzanie Danych
     actual_milestones = {}
     actual_df = pd.DataFrame()
 
-    if selected_roast_path:
+    if state.selected_roast_path:
         try:
-            actual_df, actual_milestones = parse_roasttime_csv(selected_roast_path)
+            actual_df, actual_milestones = parsuj_csv_roasttime(state.selected_roast_path)
 
             avg_interval = 1.0
             if not actual_df.empty and 'Time_Seconds' in actual_df.columns:
@@ -54,51 +36,51 @@ def render(
 
             # Obliczenia RoR IBTS
             if 'IBTS Temp' in actual_df.columns:
-                if ror_method_ibts == 'Średnia Ruchoma':
-                    actual_df = calculate_ror(actual_df, temp_col='IBTS Temp', time_col='Time_Seconds')
+                if state.ror_method_ibts == 'Średnia Ruchoma':
+                    actual_df = oblicz_ror(actual_df, temp_col='IBTS Temp', time_col='Time_Seconds')
                     if 'Calc_RoR' in actual_df.columns:
-                        smooth_samples = max(1, int(ibts_params['window_sec'] / avg_interval))
-                        actual_df['RoR_Display'] = smooth_data(actual_df['Calc_RoR'], window=smooth_samples)
+                        smooth_samples = max(1, int(state.ibts_params['window_sec'] / avg_interval))
+                        actual_df['RoR_Display'] = wygladz_dane(actual_df['Calc_RoR'], window=smooth_samples)
                 else:
-                    actual_df = calculate_ror_sg(actual_df, temp_col='IBTS Temp', **ibts_params)
+                    actual_df = oblicz_ror_sg(actual_df, temp_col='IBTS Temp', **state.ibts_params)
                     if 'Calc_RoR_SG' in actual_df.columns:
                         actual_df['RoR_Display'] = actual_df['Calc_RoR_SG']
 
             # Obliczenia RoR Probe
             if 'Bean Probe Temp' in actual_df.columns:
-                if ror_method_probe == 'Średnia Ruchoma':
-                    actual_df = calculate_ror(actual_df, temp_col='Bean Probe Temp', time_col='Time_Seconds')
+                if state.ror_method_probe == 'Średnia Ruchoma':
+                    actual_df = oblicz_ror(actual_df, temp_col='Bean Probe Temp', time_col='Time_Seconds')
                     if 'Calc_RoR_Probe' in actual_df.columns:
-                        smooth_samples = max(1, int(probe_params['window_sec'] / avg_interval))
-                        actual_df['RoR_Display_Probe'] = smooth_data(actual_df['Calc_RoR_Probe'], window=smooth_samples)
+                        smooth_samples = max(1, int(state.probe_params['window_sec'] / avg_interval))
+                        actual_df['RoR_Display_Probe'] = wygladz_dane(actual_df['Calc_RoR_Probe'], window=smooth_samples)
                 else:
-                    actual_df = calculate_ror_sg(actual_df, temp_col='Bean Probe Temp', **probe_params)
+                    actual_df = oblicz_ror_sg(actual_df, temp_col='Bean Probe Temp', **state.probe_params)
                     if 'Calc_RoR_SG_Probe' in actual_df.columns:
                         actual_df['RoR_Display_Probe'] = actual_df['Calc_RoR_SG_Probe']
 
             # Obliczenia Dawki Termicznej
             if 'IBTS Temp' in actual_df.columns:
-                actual_df = calculate_thermal_dose(actual_df, temp_col='IBTS Temp', time_col='Time_Seconds', t_base=dose_t_base, start_time_threshold=dose_start_time)
+                actual_df = oblicz_dawke_termiczna(actual_df, temp_col='IBTS Temp', time_col='Time_Seconds', t_base=state.dose_t_base, start_time_threshold=state.dose_start_time)
             if 'Bean Probe Temp' in actual_df.columns:
-                actual_df = calculate_thermal_dose(actual_df, temp_col='Bean Probe Temp', time_col='Time_Seconds', t_base=dose_t_base, start_time_threshold=dose_start_time)
+                actual_df = oblicz_dawke_termiczna(actual_df, temp_col='Bean Probe Temp', time_col='Time_Seconds', t_base=state.dose_t_base, start_time_threshold=state.dose_start_time)
 
         except Exception as e:
             st.error(f"Błąd wczytywania pliku wypału: {e}")
             traceback.print_exc()
 
-    plan_df_sorted = plan_df.sort_values('Time_Seconds')
+    plan_df_sorted = state.plan_df.sort_values('Time_Seconds')
 
     # FIGURE 1: TEMPERATURE
-    fig_temp = make_subplots(rows=2, cols=1, shared_xaxes=True, vertical_spacing=0.1, row_heights=[0.75, 0.25], subplot_titles=(f"Profil Temperatury: {selected_profile}", "Ustawienia"))
-    if show_plan:
+    fig_temp = make_subplots(rows=2, cols=1, shared_xaxes=True, vertical_spacing=0.1, row_heights=[0.75, 0.25], subplot_titles=(f"Profil Temperatury: {state.selected_profile}", "Ustawienia"))
+    if state.show_plan:
         for i, row in plan_df_sorted.iterrows():
             pos = "top center" if i % 2 == 0 else "bottom center"
             fig_temp.add_trace(go.Scatter(x=[row['Time_Seconds']], y=[row['Temperatura']], mode='markers+text', name='Plan', text=[row['Faza']], textposition=pos, marker=dict(size=12, color='cyan', symbol='x'), showlegend=(i==0)), row=1, col=1)
-            add_l_projection(fig_temp, row['Time_Seconds'], row['Temperatura'], 'cyan', row=1)
+            dodaj_projekcje_l(fig_temp, row['Time_Seconds'], row['Temperatura'], 'cyan', row=1)
     if not actual_df.empty:
-        if show_ibts:
+        if state.show_ibts:
             fig_temp.add_trace(go.Scatter(x=actual_df['Time_Seconds'], y=actual_df['IBTS Temp'], mode='lines', name='Rzecz. IBTS', line=dict(color='orange', width=2)), row=1, col=1)
-        if show_probe and 'Bean Probe Temp' in actual_df.columns:
+        if state.show_probe and 'Bean Probe Temp' in actual_df.columns:
             fig_temp.add_trace(go.Scatter(x=actual_df['Time_Seconds'], y=actual_df['Bean Probe Temp'], mode='lines', name='Rzecz. Sonda', line=dict(color='lightgreen', width=2, dash='dot')), row=1, col=1)
         sorted_milestones = sorted(actual_milestones.items(), key=lambda x: x[1])
         for i, (name, time_sec) in enumerate(sorted_milestones):
@@ -110,24 +92,24 @@ def render(
                     offset_y = 20 if (i % 2 != 0) else 0
                 fig_temp.add_trace(go.Scatter(x=[time_sec], y=[temp_val], mode='markers', name=f'{name}', marker=dict(size=10, color='red', symbol='circle-open'), showlegend=False), row=1, col=1)
                 fig_temp.add_annotation(x=time_sec, y=temp_val, text=name, showarrow=True, arrowhead=1, yshift=15 + offset_y if i%2==0 else -15 - offset_y, font=dict(color='red'), row=1, col=1)
-                add_l_projection(fig_temp, time_sec, temp_val, 'red', row=1)
-    add_settings_subplot(fig_temp, actual_df, plan_df, show_plan, row_idx=2)
+                dodaj_projekcje_l(fig_temp, time_sec, temp_val, 'red', row=1)
+    dodaj_subplot_ustawien(fig_temp, actual_df, state.plan_df, state.show_plan, row_idx=2)
     fig_temp.update_layout(template="plotly_dark", height=600, margin=dict(t=30, b=0, l=0, r=0), hovermode="x unified", legend=dict(orientation="v", yanchor="top", y=0.98, xanchor="left", x=0.01, bgcolor="rgba(0,0,0,0.5)"))
     fig_temp.update_yaxes(title_text="Temperatura (°C)", row=1, col=1)
-    fig_temp.update_yaxes(title_text="Wartość", range=[settings_y_min, settings_y_max], dtick=1, row=2, col=1)
+    fig_temp.update_yaxes(title_text="Wartość", range=state.settings_y_lim, dtick=1, row=2, col=1)
     fig_temp.update_xaxes(title_text="Czas (sekundy)", row=2, col=1)
     st.plotly_chart(fig_temp, use_container_width=True)
 
     # FIGURE 2: RoR
     if not actual_df.empty:
         fig_ror = make_subplots(rows=2, cols=1, shared_xaxes=True, vertical_spacing=0.1, row_heights=[0.75, 0.25], subplot_titles=("RoR (Szybkość Wzrostu)", "Ustawienia"))
-        if show_ibts and 'RoR_Display' in actual_df.columns:
+        if state.show_ibts and 'RoR_Display' in actual_df.columns:
             fig_ror.add_trace(go.Scatter(x=actual_df['Time_Seconds'], y=actual_df['RoR_Display'], mode='lines', name='RoR IBTS', line=dict(color='magenta', width=2)), row=1, col=1)
-        if show_probe and 'RoR_Display_Probe' in actual_df.columns:
+        if state.show_probe and 'RoR_Display_Probe' in actual_df.columns:
             fig_ror.add_trace(go.Scatter(x=actual_df['Time_Seconds'], y=actual_df['RoR_Display_Probe'], mode='lines', name='RoR Sonda', line=dict(color='mediumspringgreen', width=2, dash='dot')), row=1, col=1)
-        if show_plan:
+        if state.show_plan:
             for _, row in plan_df_sorted.iterrows():
-                 add_l_projection(fig_ror, row['Time_Seconds'], None, 'cyan', row=1, show_y=False)
+                 dodaj_projekcje_l(fig_ror, row['Time_Seconds'], None, 'cyan', row=1, show_y=False)
         for name, time_sec in actual_milestones.items():
              if 'RoR_Display' in actual_df.columns:
                 row_actual = actual_df.iloc[(actual_df['Time_Seconds'] - time_sec).abs().argsort()[:1]]
@@ -136,15 +118,15 @@ def render(
                      if pd.notna(ror_val):
                          fig_ror.add_trace(go.Scatter(x=[time_sec], y=[ror_val], mode='markers', name=name, marker=dict(size=8, color='red', symbol='circle-open'), showlegend=False), row=1, col=1)
                          fig_ror.add_annotation(x=time_sec, y=ror_val, text=name, showarrow=False, yshift=10, font=dict(color='red', size=9), row=1, col=1)
-                         add_l_projection(fig_ror, time_sec, ror_val, 'red', row=1)
+                         dodaj_projekcje_l(fig_ror, time_sec, ror_val, 'red', row=1)
                      else:
-                         add_l_projection(fig_ror, time_sec, None, 'red', row=1, show_y=False)
+                         dodaj_projekcje_l(fig_ror, time_sec, None, 'red', row=1, show_y=False)
              else:
-                 add_l_projection(fig_ror, time_sec, None, 'red', row=1, show_y=False)
-        add_settings_subplot(fig_ror, actual_df, plan_df, show_plan, row_idx=2)
+                 dodaj_projekcje_l(fig_ror, time_sec, None, 'red', row=1, show_y=False)
+        dodaj_subplot_ustawien(fig_ror, actual_df, state.plan_df, state.show_plan, row_idx=2)
         fig_ror.update_layout(template="plotly_dark", height=500, margin=dict(t=30, b=0, l=0, r=0), hovermode="x unified", legend=dict(orientation="v", yanchor="top", y=0.98, xanchor="left", x=0.01, bgcolor="rgba(0,0,0,0.5)"))
-        fig_ror.update_yaxes(title_text="RoR (°C/min)", range=[ror_y_min, ror_y_max], row=1, col=1)
-        fig_ror.update_yaxes(title_text="Wartość", range=[settings_y_min, settings_y_max], dtick=1, row=2, col=1)
+        fig_ror.update_yaxes(title_text="RoR (°C/min)", range=state.ror_y_lim, row=1, col=1)
+        fig_ror.update_yaxes(title_text="Wartość", range=state.settings_y_lim, dtick=1, row=2, col=1)
         fig_ror.update_xaxes(title_text="Czas (sekundy)", row=2, col=1)
         st.plotly_chart(fig_ror, use_container_width=True)
 
@@ -152,13 +134,13 @@ def render(
     if not actual_df.empty and ('Thermal_Dose' in actual_df.columns or 'Thermal_Dose_Probe' in actual_df.columns):
         fig_dose = make_subplots(specs=[[{"secondary_y": True}]])
         fig_dose.update_layout(title_text="Skumulowana Dawka Termiczna")
-        if show_ibts and 'IBTS Temp' in actual_df.columns:
+        if state.show_ibts and 'IBTS Temp' in actual_df.columns:
             fig_dose.add_trace(go.Scatter(x=actual_df['Time_Seconds'], y=actual_df['IBTS Temp'], name="Temp IBTS", line=dict(color='orange', width=1, dash='dash')), secondary_y=False)
-        if show_probe and 'Bean Probe Temp' in actual_df.columns:
+        if state.show_probe and 'Bean Probe Temp' in actual_df.columns:
             fig_dose.add_trace(go.Scatter(x=actual_df['Time_Seconds'], y=actual_df['Bean Probe Temp'], name="Temp Sonda", line=dict(color='lightgreen', width=1, dash='dot')), secondary_y=False)
-        if show_ibts and 'Thermal_Dose' in actual_df.columns:
+        if state.show_ibts and 'Thermal_Dose' in actual_df.columns:
              fig_dose.add_trace(go.Scatter(x=actual_df['Time_Seconds'], y=actual_df['Thermal_Dose'], name="Dawka IBTS", line=dict(color='red', width=3), fill='tozeroy', fillcolor='rgba(255, 0, 0, 0.1)'), secondary_y=True)
-        if show_probe and 'Thermal_Dose_Probe' in actual_df.columns:
+        if state.show_probe and 'Thermal_Dose_Probe' in actual_df.columns:
              fig_dose.add_trace(go.Scatter(x=actual_df['Time_Seconds'], y=actual_df['Thermal_Dose_Probe'], name="Dawka Sonda", line=dict(color='green', width=3, dash='dash')), secondary_y=True)
         fig_dose.update_yaxes(title_text="Temperatura (°C)", secondary_y=False)
         fig_dose.update_yaxes(title_text="Dawka", secondary_y=True)
@@ -176,12 +158,12 @@ def render(
 
         try:
             x_plan, y_plan = plan_df_sorted['Time_Seconds'], plan_df_sorted['Temperatura']
-            coeffs = np.polyfit(x_plan, y_plan, poly_degree)
+            coeffs = np.polyfit(x_plan, y_plan, state.poly_degree)
             poly = np.poly1d(coeffs)
             max_time = max(x_plan.max(), actual_df['Time_Seconds'].max()) if not actual_df.empty else x_plan.max()
             time_grid = np.linspace(0, max_time, int(max_time) + 1)
             df_theoretical = pd.DataFrame({'Time_Seconds': time_grid, 'Theoretical_Temp': poly(time_grid)})
-            df_theoretical = calculate_thermal_dose(df_theoretical, temp_col='Theoretical_Temp', time_col='Time_Seconds', t_base=dose_t_base, start_time_threshold=dose_start_time)
+            df_theoretical = oblicz_dawke_termiczna(df_theoretical, temp_col='Theoretical_Temp', time_col='Time_Seconds', t_base=state.dose_t_base, start_time_threshold=state.dose_start_time)
             m_col3.metric("Teoretyczna Dawka (Plan)", f"{df_theoretical['Thermal_Dose'].iloc[-1]:,.0f}")
         except Exception as e:
             m_col3.metric("Teoretyczna Dawka (Plan)", "Błąd")
@@ -194,7 +176,7 @@ def render(
         with col1:
             st.subheader("Plan vs Rzeczywistość")
             comparison_data = []
-            for _, row in plan_df.iterrows():
+            for _, row in state.plan_df.iterrows():
                 phase_name, plan_time, plan_temp = row['Faza'], row['Time_Seconds'], row['Temperatura']
                 actual_time, actual_temp = None, None
                 matched_key = next((k for k in actual_milestones if k.lower() in phase_name.lower() or phase_name.lower() in k.lower()), None)
@@ -239,7 +221,7 @@ def render(
             if 'df_theoretical' in locals() and not df_theoretical.empty:
                 fig_poly = go.Figure()
                 fig_poly.add_trace(go.Scatter(x=plan_df_sorted['Time_Seconds'], y=plan_df_sorted['Temperatura'], mode='markers', name='Punkty z Planu', marker=dict(size=10, color='cyan', symbol='x')))
-                fig_poly.add_trace(go.Scatter(x=df_theoretical['Time_Seconds'], y=df_theoretical['Theoretical_Temp'], mode='lines', name=f'Dopasowanie (st. {poly_degree})', line=dict(color='lime', width=3)))
+                fig_poly.add_trace(go.Scatter(x=df_theoretical['Time_Seconds'], y=df_theoretical['Theoretical_Temp'], mode='lines', name=f'Dopasowanie (st. {state.poly_degree})', line=dict(color='lime', width=3)))
                 fig_poly.update_layout(template="plotly_dark", height=400, title="Dopasowanie Krzywej Wielomianowej do Punktów Planu", xaxis_title="Czas (sekundy)", yaxis_title="Temperatura (°C)", margin=dict(t=50, b=0, l=0, r=0))
                 st.plotly_chart(fig_poly, use_container_width=True)
         except NameError:
