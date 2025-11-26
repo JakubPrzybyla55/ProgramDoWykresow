@@ -122,7 +122,7 @@ else:
         plan_analysis.render(st, selected_profile, plan_df, selected_roast_path, show_plan, show_ibts, show_probe, ror_y_min, ror_y_max, settings_y_min, settings_y_max, ror_method_ibts, ibts_params, ror_method_probe, probe_params, dose_t_base, dose_start_time, poly_degree)
 
     with tab2:
-        plan_comparison.render(st, selected_profile, roast_files_paths, selected_roast_path, base_data_path, dose_t_base, dose_start_time)
+        plan_comparison.render(st, selected_profile, plan_file_path, roast_files_paths, base_data_path, dose_t_base, dose_start_time)
 
     with tab3:
         general_comparison.render(st, base_data_path, dose_t_base, dose_start_time)

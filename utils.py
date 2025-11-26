@@ -286,6 +286,92 @@ def set_agtron(profile_path, roast_filename, value):
     data['agtron'][roast_filename] = value
     save_metadata(profile_path, data)
 
+# --- Zarządzanie metadanymi planów ---
+PLANS_METADATA_PATH = 'data/plans_metadata.csv'
+
+def load_plans_metadata():
+    """Wczytuje metadane planów z pliku CSV. Jeśli plik nie istnieje, tworzy pusty DataFrame."""
+    if not os.path.exists(PLANS_METADATA_PATH):
+        return pd.DataFrame(columns=['plan_name', 'agtron', 'A', 'Ea', 'R'])
+    try:
+        return pd.read_csv(PLANS_METADATA_PATH)
+    except pd.errors.EmptyDataError:
+        return pd.DataFrame(columns=['plan_name', 'agtron', 'A', 'Ea', 'R'])
+
+
+def save_plans_metadata(df):
+    """Zapisuje metadane planów do pliku CSV."""
+    os.makedirs(os.path.dirname(PLANS_METADATA_PATH), exist_ok=True)
+    df.to_csv(PLANS_METADATA_PATH, index=False)
+
+
+def get_plan_metadata(plan_name):
+    """Pobiera metadane dla konkretnego planu, zwracając domyślne wartości, jeśli brak wpisu."""
+    df = load_plans_metadata()
+    plan_data = df[df['plan_name'] == plan_name]
+
+    if not plan_data.empty:
+        return plan_data.iloc[0].to_dict()
+    else:
+        # Zwraca słownik z domyślnymi wartościami
+        return {
+            'plan_name': plan_name,
+            'agtron': 85.0,
+            'A': 0.788,
+            'Ea': 26.02,
+            'R': 0.008314
+        }
+
+def update_plan_metadata(plan_name, new_data):
+    """Aktualizuje lub dodaje metadane dla konkretnego planu."""
+    df = load_plans_metadata()
+    plan_exists = df['plan_name'] == plan_name
+
+    if plan_exists.any():
+        # Aktualizuje istniejący wiersz
+        for key, value in new_data.items():
+            df.loc[plan_exists, key] = value
+    else:
+        # Dodaje nowy wiersz
+        new_row = {'plan_name': plan_name, **new_data}
+        new_df = pd.DataFrame([new_row])
+        df = pd.concat([df, new_df], ignore_index=True)
+
+    save_plans_metadata(df)
+
+
+def calculate_thermal_dose_arrhenius(df, temp_col='IBTS Temp', time_col='Time_Seconds', A=0.788, Ea=26.02, R=0.008314, start_time_threshold=0.0):
+    """Oblicza skumulowaną Dawkę Termiczną modelem Arrheniusa."""
+    if df.empty or time_col not in df.columns or temp_col not in df.columns:
+        return df
+
+    df = df.copy()
+    suffix = "_Probe" if "Probe" in temp_col else ""
+    result_col = f'Thermal_Dose_Arrhenius{suffix}'
+    df[result_col] = np.nan
+
+    df_calc = df[df[time_col] >= start_time_threshold].copy()
+    if df_calc.empty:
+        df[result_col] = 0.0
+        return df
+
+    df_calc = df_calc.sort_values(by=time_col)
+    df_calc['delta_t'] = df_calc[time_col].diff().fillna(0)
+
+    # Użycie średniej temperatury w interwale dla większej dokładności
+    temp_avg_celsius = ((df_calc[temp_col] + df_calc[temp_col].shift(1)) / 2).fillna(df_calc[temp_col])
+    temp_avg_kelvin = temp_avg_celsius + 273.15
+
+    # Obliczenie k(T)
+    k_T = A * np.exp(-Ea / (R * temp_avg_kelvin))
+
+    increments = k_T * df_calc['delta_t']
+    df.loc[df_calc.index, result_col] = increments.cumsum()
+    df[result_col] = df[result_col].fillna(0.0)
+
+    return df
+
+
 # --- Funkcje pomocnicze do wykresów ---
 
 def add_l_projection(fig, x_val, y_val, color, row=1, col=1, is_time_x=True, show_y=True, show_x=True, text_offset_y=0):
