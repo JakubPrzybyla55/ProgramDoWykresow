@@ -99,7 +99,32 @@ def render(st: object, state: AppState):
         st.warning("Brak danych do wyświetlenia. Upewnij się, że wypały mają przypisany kolor Agtron.")
         return
 
-    df_plot = pd.DataFrame(all_data).sort_values(by="Agtron", ascending=False)
+    # Opcje sortowania
+    st.markdown("##### Sortowanie Wykresów")
+    col_sort1, col_sort2 = st.columns(2)
+    with col_sort1:
+        sort_criterion = st.radio(
+            "Kryterium sortowania:",
+            options=["Agtron", "Dawka Termiczna"],
+            horizontal=True,
+            key="plan_sort_crit"
+        )
+    with col_sort2:
+        sort_order = st.radio(
+            "Kolejność:",
+            options=["Rosnąco", "Malejąco"],
+            horizontal=True,
+            key="plan_sort_order"
+        )
+
+    df_plot = pd.DataFrame(all_data)
+    ascending = True if sort_order == "Rosnąco" else False
+
+    if sort_criterion == "Agtron":
+        df_plot = df_plot.sort_values(by="Agtron", ascending=ascending)
+    else:
+        # Sortowanie po Dawce (używamy Modelu 1 jako odniesienia dla obu wykresów)
+        df_plot = df_plot.sort_values(by="Dose_Old", ascending=ascending)
 
     # Wykres 1: Model Oryginalny (Czerwony)
     fig1 = go.Figure()
