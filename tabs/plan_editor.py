@@ -2,6 +2,18 @@ import streamlit as st
 import pandas as pd
 import os
 from state import AppState
+from utils import parsuj_czas_do_sekund
+
+def sort_plan_dataframe(df):
+    """Sorts the plan DataFrame by 'Czas' chronologically."""
+    if df.empty or 'Czas' not in df.columns:
+        return df
+
+    # Create a temporary column for sorting
+    df['_sort_key'] = df['Czas'].apply(parsuj_czas_do_sekund)
+    df = df.sort_values(by='_sort_key')
+    df = df.drop(columns=['_sort_key'])
+    return df
 
 def render(st: object, state: AppState):
     """Renders the Plan Editor Tab."""
@@ -45,6 +57,7 @@ def render(st: object, state: AppState):
             {"Faza": "1st Crack", "Czas": "7:30", "Temperatura": 195.0, "Nawiew": 3, "Moc": 5},
             {"Faza": "Drop", "Czas": "9:00", "Temperatura": 205.0, "Nawiew": 0, "Moc": 0},
         ])
+
         edited_df_new = st.data_editor(df_new_plan, column_config=plan_cols_config, num_rows="dynamic", use_container_width=True, key="new_plan_editor")
 
         if st.button("Zapisz nowy plan", type="primary"):
@@ -57,7 +70,9 @@ def render(st: object, state: AppState):
                 os.makedirs(save_path_dir, exist_ok=True)
                 save_path_file = os.path.join(save_path_dir, new_plan_filename)
                 try:
-                    edited_df_new.to_csv(save_path_file, index=False)
+                    # Sort before saving
+                    final_df = sort_plan_dataframe(edited_df_new)
+                    final_df.to_csv(save_path_file, index=False)
                     st.success(f"Zapisano plan w: `{save_path_file}`")
                     st.info("Nowy plan będzie dostępny po odświeżeniu strony lub zmianie profilu.")
                 except Exception as e:
@@ -71,10 +86,22 @@ def render(st: object, state: AppState):
             st.markdown("Zmodyfikuj etapy planu poniżej. Możesz dodawać i usuwać wiersze.")
             try:
                 df_to_edit = pd.read_csv(state.plan_file_path)
+
+                # Ensure Nawiew and Moc columns exist
+                if 'Nawiew' not in df_to_edit.columns:
+                    df_to_edit['Nawiew'] = 0
+                if 'Moc' not in df_to_edit.columns:
+                    df_to_edit['Moc'] = 0
+
+                # Sort when loading
+                df_to_edit = sort_plan_dataframe(df_to_edit)
+
                 edited_df_existing = st.data_editor(df_to_edit, column_config=plan_cols_config, num_rows="dynamic", use_container_width=True, key="existing_plan_editor")
                 if st.button("Zapisz zmiany w planie", type="primary"):
                     try:
-                        edited_df_existing.to_csv(state.plan_file_path, index=False)
+                        # Sort before saving
+                        final_df = sort_plan_dataframe(edited_df_existing)
+                        final_df.to_csv(state.plan_file_path, index=False)
                         st.success(f"Zaktualizowano plan: `{state.plan_file_path}`")
                     except Exception as e:
                         st.error(f"Nie udało się zapisać pliku: {e}")
