@@ -1,152 +1,163 @@
 import pytest
 import pandas as pd
-from utils import parse_time_to_seconds, calculate_ror
+from utils import parsuj_czas_do_sekund, oblicz_ror, oblicz_dawke_termiczna, parsuj_csv_profilu, oblicz_ror_sg
 
-# --- Testy dla parse_time_to_seconds ---
+# --- Testy dla parsuj_czas_do_sekund ---
 
-def test_parse_time_mm_ss():
-    assert parse_time_to_seconds("10:00") == 600.0
-    assert parse_time_to_seconds("0:30") == 30.0
+def test_parsuj_czas_mm_ss():
+    assert parsuj_czas_do_sekund("10:00") == 600.0
+    assert parsuj_czas_do_sekund("0:30") == 30.0
 
-def test_parse_time_hh_mm_ss():
-    assert parse_time_to_seconds("1:00:00") == 3600.0
+def test_parsuj_czas_hh_mm_ss():
+    assert parsuj_czas_do_sekund("1:00:00") == 3600.0
 
-def test_parse_time_seconds_only():
-    assert parse_time_to_seconds("120") == 120.0
+def test_parsuj_czas_sekundy_tylko():
+    assert parsuj_czas_do_sekund("120") == 120.0
 
-def test_parse_time_invalid():
-    assert parse_time_to_seconds("invalid") is None
-    assert parse_time_to_seconds(None) is None
-    assert parse_time_to_seconds("-") is None
+def test_parsuj_czas_nieprawidlowy():
+    assert parsuj_czas_do_sekund("invalid") is None
+    assert parsuj_czas_do_sekund(None) is None
+    assert parsuj_czas_do_sekund("-") is None
 
-# --- Testy dla calculate_ror ---
+# --- Testy dla oblicz_ror ---
 
-def test_calculate_ror_basic():
-    # Przygotowanie prostych danych: 3 punkty co 60 sekund, wzrost o 10 stopni
-    # RoR = (10 stopni / 60s) * 60s = 10 stopni/min
-    # Now logic: Point to point.
+def test_oblicz_ror_podstawowy():
     data = {
         'Time_Seconds': [0, 60, 120],
         'IBTS Temp': [100, 110, 120]
     }
     df = pd.DataFrame(data)
-
-    # Removed window_seconds
-    result = calculate_ror(df, temp_col='IBTS Temp', time_col='Time_Seconds')
-
+    result = oblicz_ror(df, temp_col='IBTS Temp', time_col='Time_Seconds')
     assert 'Calc_RoR' in result.columns
-    # Pierwszy wiersz ma NaN (bo shift)
     assert pd.isna(result.iloc[0]['Calc_RoR'])
-    # Kolejne powinny mieć 10.0
     assert result.iloc[1]['Calc_RoR'] == 10.0
     assert result.iloc[2]['Calc_RoR'] == 10.0
 
-def test_calculate_ror_irregular():
-    # Test irregular intervals
-    # 0->2s (dt=2), T: 100->102 (dT=2). RoR = 2/2*60 = 60
-    # 2->5s (dt=3), T: 102->108 (dT=6). RoR = 6/3*60 = 120
+def test_oblicz_ror_nieregularny():
     data = {
         'Time_Seconds': [0, 2, 5],
         'IBTS Temp': [100, 102, 108]
     }
     df = pd.DataFrame(data)
-    result = calculate_ror(df, temp_col='IBTS Temp', time_col='Time_Seconds')
-
+    result = oblicz_ror(df, temp_col='IBTS Temp', time_col='Time_Seconds')
     assert result.iloc[1]['Calc_RoR'] == 60.0
     assert result.iloc[2]['Calc_RoR'] == 120.0
 
-def test_calculate_ror_empty():
+def test_oblicz_ror_pusty():
     df = pd.DataFrame()
-    result = calculate_ror(df)
+    result = oblicz_ror(df)
     assert result.empty
 
-def test_calculate_ror_missing_cols():
+def test_oblicz_ror_brak_kolumn():
     df = pd.DataFrame({'A': [1, 2, 3]})
-    result = calculate_ror(df)
+    result = oblicz_ror(df)
     assert 'Calc_RoR' not in result.columns
 
-from utils import calculate_thermal_dose
+# --- Testy dla oblicz_dawke_termiczna ---
 
-# --- Testy dla calculate_thermal_dose ---
-
-def test_calculate_thermal_dose_basic():
-    # Dane: T = 100 (Waga = 1), dt = 10s
-    # T_base = 100
-    # Start = 0
-    # Waga = 2^((100-100)/10) = 2^0 = 1
-    # Dawka = 1 * 10 = 10 (na krok)
-
+def test_oblicz_dawke_termiczna_podstawowy():
     data = {
         'Time_Seconds': [0, 10, 20],
         'IBTS Temp': [100, 100, 100]
     }
     df = pd.DataFrame(data)
-
-    result = calculate_thermal_dose(df, temp_col='IBTS Temp', time_col='Time_Seconds', t_base=100, start_time_threshold=0)
-
+    result = oblicz_dawke_termiczna(df, temp_col='IBTS Temp', time_col='Time_Seconds', t_base=100, start_time_threshold=0)
     col = 'Thermal_Dose'
     assert col in result.columns
-
-    # t=0: Dawka=0 (start)
-    # t=10: dt=10, AvgTemp=100, W=1, Inc=10 -> Sum=10
-    # t=20: dt=10, AvgTemp=100, W=1, Inc=10 -> Sum=20
-
-    # Note: Implementation uses cumsum. First point (after filter) gets 0 accumulation if delta_t is 0 (first point usually delta_t=NaN or 0 depending on implementation)
-    # My implementation:
-    # df_calc['delta_t'] = df_calc[time_col].diff().fillna(0)  -> First point delta_t=0
-    # So first point Dose=0.
-    # Second point delta_t=10. Dose = 0 + 1*10 = 10.
-
     assert result.iloc[0][col] == 0.0
     assert result.iloc[1][col] == 10.0
     assert result.iloc[2][col] == 20.0
 
-def test_calculate_thermal_dose_temp_increase():
-    # T rośnie: 100 -> 110
-    # T_base = 100
-    # t: 0 -> 10
-    # T_avg (0-10s) = (100+110)/2 = 105
-    # Waga = 2^((105-100)/10) = 2^0.5 = 1.414...
-    # Dose = 1.414 * 10 = 14.14
-
+def test_oblicz_dawke_termiczna_wzrost_temperatury():
     data = {
         'Time_Seconds': [0, 10],
         'IBTS Temp': [100, 110]
     }
     df = pd.DataFrame(data)
-    result = calculate_thermal_dose(df, t_base=100)
-
+    result = oblicz_dawke_termiczna(df, t_base=100)
     dose_1 = result.iloc[1]['Thermal_Dose']
     expected = (2**0.5) * 10
     assert abs(dose_1 - expected) < 0.1
 
-def test_calculate_thermal_dose_threshold():
-    # Dane: 0s, 2s, 10s, 20s
-    # Threshold = 5s
-    # Punkty brane pod uwagę: 10s, 20s.
-    # 0s i 2s odrzucone (Dose=0)
-    # Punkt 10s: Pierwszy w filtrze. delta_t=0 (bo diff z niczym wewnątrz grupy). Dose=0.
-    # Punkt 20s: delta_t=10. Temp np 100. W=1. Dose = 10.
-
+def test_oblicz_dawke_termiczna_prog_czasowy():
     data = {
         'Time_Seconds': [0, 2, 10, 20],
         'IBTS Temp': [100, 100, 100, 100]
     }
     df = pd.DataFrame(data)
-    result = calculate_thermal_dose(df, start_time_threshold=5)
-
+    result = oblicz_dawke_termiczna(df, start_time_threshold=5)
     assert result.iloc[0]['Thermal_Dose'] == 0.0
     assert result.iloc[1]['Thermal_Dose'] == 0.0
-    assert result.iloc[2]['Thermal_Dose'] == 0.0 # Start akumulacji
+    assert result.iloc[2]['Thermal_Dose'] == 0.0
     assert result.iloc[3]['Thermal_Dose'] == 10.0
 
-def test_calculate_thermal_dose_probe():
+def test_oblicz_dawke_termiczna_sonda():
     data = {
         'Time_Seconds': [0, 10],
         'Bean Probe Temp': [100, 100]
     }
     df = pd.DataFrame(data)
-    result = calculate_thermal_dose(df, temp_col='Bean Probe Temp')
-
+    result = oblicz_dawke_termiczna(df, temp_col='Bean Probe Temp')
     assert 'Thermal_Dose_Probe' in result.columns
     assert result.iloc[1]['Thermal_Dose_Probe'] == 10.0
+
+# --- Nowe testy ---
+
+def test_parsuj_csv_profilu_poprawny(tmp_path):
+    """Testuje parsowanie poprawnego pliku CSV profilu."""
+    p = tmp_path / "plan.csv"
+    p.write_text("Faza,Czas,Temperatura\nYellowing,5:00,160.0")
+    df = parsuj_csv_profilu(str(p))
+    assert not df.empty
+    assert "Time_Seconds" in df.columns
+    assert df.iloc[0]["Time_Seconds"] == 300.0
+
+def test_parsuj_csv_profilu_brak_kolumny_czasu(tmp_path):
+    """Testuje obsługę błędu, gdy brakuje kolumny Czas/Time."""
+    p = tmp_path / "plan.csv"
+    p.write_text("Faza,Temperatura\nYellowing,160.0")
+    with pytest.raises(ValueError, match="musi zawierać kolumnę 'Czas' lub 'Time'"):
+        parsuj_csv_profilu(str(p))
+
+def test_oblicz_ror_sg_dziala_bez_bledow():
+    """Testuje, czy obliczanie RoR metodą SG nie zwraca błędów."""
+    df = pd.DataFrame({
+        'Time_Seconds': range(0, 30),
+        'IBTS Temp': [100 + i*2 for i in range(30)]
+    })
+    try:
+        from utils import SCIPY_AVAILABLE
+        if SCIPY_AVAILABLE:
+            df_res = oblicz_ror_sg(df, window_length=15, polyorder=2)
+            assert 'Calc_RoR_SG' in df_res.columns
+            assert not df_res['Calc_RoR_SG'].isnull().all()
+    except ImportError:
+        pytest.skip("scipy not available, skipping SG test")
+
+def test_dose_calculation_integration():
+    # Create a dummy dataframe representing a roast
+    # Time from 0 to 10 seconds, Temp increasing
+    data = {
+        'Time_Seconds': [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10],
+        'IBTS Temp': [100, 105, 110, 115, 120, 125, 130, 135, 140, 145, 150]
+    }
+    df = pd.DataFrame(data)
+
+    # Calculate dose with start time 0 and base 100
+    df_res = oblicz_dawke_termiczna(df, t_base=100, start_time_threshold=0)
+
+    assert 'Thermal_Dose' in df_res.columns
+    # Check that dose is increasing
+    assert df_res['Thermal_Dose'].iloc[-1] > df_res['Thermal_Dose'].iloc[0]
+    assert df_res['Thermal_Dose'].iloc[0] == 0.0
+
+    # Calculate with start time threshold = 5
+    df_res_th = oblicz_dawke_termiczna(df, t_base=100, start_time_threshold=5)
+
+    # Indices 0-4 (Time 0-4) should be 0
+    assert df_res_th.loc[0, 'Thermal_Dose'] == 0.0
+    assert df_res_th.loc[4, 'Thermal_Dose'] == 0.0
+
+    # Index 5 (Time 5) starts accumulation
+    assert df_res_th.loc[5, 'Thermal_Dose'] == 0.0
+    assert df_res_th.loc[6, 'Thermal_Dose'] > 0.0

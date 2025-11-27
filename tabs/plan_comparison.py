@@ -3,37 +3,30 @@ import pandas as pd
 import os
 import plotly.graph_objects as go
 from utils import (
-    parse_roasttime_csv,
-    calculate_thermal_dose,
-    get_agtron,
-    get_plan_metadata,
-    update_plan_metadata,
-    calculate_thermal_dose_arrhenius,
-    parse_profile_csv
+    parsuj_csv_roasttime,
+    oblicz_dawke_termiczna,
+    pobierz_agtron,
+    pobierz_metadane_planu,
+    aktualizuj_metadane_planu,
+    oblicz_dawke_termiczna_arrhenius,
+    parsuj_csv_profilu
 )
+from state import AppState
 
-def render(
-    st,
-    selected_profile: str,
-    plan_file_path: str,
-    roast_files_paths: list,
-    base_data_path: str,
-    dose_t_base: float,
-    dose_start_time: float
-):
+def render(st: object, state: AppState):
     """Renderuje zakładkę Porównanie Wypałów dla Planu."""
-    st.subheader(f"Dawka Termiczna vs Kolor dla Planu: {selected_profile}")
+    st.subheader(f"Dawka Termiczna vs Kolor dla Planu: {state.selected_profile}")
 
-    if not roast_files_paths:
+    if not state.roast_files_paths:
         st.info("Brak plików wypałów do analizy w tym profilu.")
         return
-    if not plan_file_path:
+    if not state.plan_file_path:
         st.warning("Brak pliku planu dla tego profilu. Nie można obliczyć dawki teoretycznej.")
         return
 
     # --- Pobieranie i edycja metadanych planu ---
-    plan_name = os.path.basename(plan_file_path)
-    plan_metadata = get_plan_metadata(plan_name)
+    plan_name = os.path.basename(state.plan_file_path)
+    plan_metadata = pobierz_metadane_planu(plan_name)
 
     st.markdown("##### Ustawienia dla Planu Teoretycznego")
     col1, col2, col3, col4 = st.columns(4)
@@ -51,7 +44,7 @@ def render(
         const_R = st.number_input("Stała Gazowa (R)", value=float(plan_metadata.get('R', 0.008314)), step=1e-6, format="%.6f")
 
     if st.button("Zapisz ustawienia dla tego planu"):
-        update_plan_metadata(plan_name, {
+        aktualizuj_metadane_planu(plan_name, {
             'agtron': agtron_teoretyczny,
             'A': const_A,
             'Ea': const_Ea,
@@ -59,16 +52,16 @@ def render(
         })
         st.success(f"Zapisano ustawienia dla planu: {plan_name}")
         # Odświeżenie metadanych po zapisie
-        plan_metadata = get_plan_metadata(plan_name)
+        plan_metadata = pobierz_metadane_planu(plan_name)
 
     # --- Obliczenia dawek ---
     all_data = []
 
     # 1. Obliczenia dla planu
     try:
-        plan_df = parse_profile_csv(plan_file_path)
-        plan_df = calculate_thermal_dose(plan_df, temp_col='Temperatura', time_col='Time_Seconds', t_base=dose_t_base, start_time_threshold=dose_start_time)
-        plan_df = calculate_thermal_dose_arrhenius(plan_df, temp_col='Temperatura', time_col='Time_Seconds', A=const_A, Ea=const_Ea, R=const_R, start_time_threshold=dose_start_time)
+        plan_df = parsuj_csv_profilu(state.plan_file_path)
+        plan_df = oblicz_dawke_termiczna(plan_df, temp_col='Temperatura', time_col='Time_Seconds', t_base=state.dose_t_base, start_time_threshold=state.dose_start_time)
+        plan_df = oblicz_dawke_termiczna_arrhenius(plan_df, temp_col='Temperatura', time_col='Time_Seconds', A=const_A, Ea=const_Ea, R=const_R, start_time_threshold=state.dose_start_time)
 
         all_data.append({
             'Label': f"PLAN ({agtron_teoretyczny:.1f})",
@@ -81,15 +74,15 @@ def render(
         st.error(f"Nie udało się przetworzyć pliku planu: {e}")
 
     # 2. Obliczenia dla wypałów empirycznych
-    for r_path in roast_files_paths:
+    for r_path in state.roast_files_paths:
         f_name = os.path.basename(r_path)
         try:
-            r_df, _ = parse_roasttime_csv(r_path)
-            agtron_val = get_agtron(os.path.join(base_data_path, selected_profile), f_name)
+            r_df, _ = parsuj_csv_roasttime(r_path)
+            agtron_val = pobierz_agtron(os.path.join(state.base_data_path, state.selected_profile), f_name)
             if agtron_val is None: continue
 
-            r_df = calculate_thermal_dose(r_df, temp_col='IBTS Temp', time_col='Time_Seconds', t_base=dose_t_base, start_time_threshold=dose_start_time)
-            r_df = calculate_thermal_dose_arrhenius(r_df, temp_col='IBTS Temp', time_col='Time_Seconds', A=const_A, Ea=const_Ea, R=const_R, start_time_threshold=dose_start_time)
+            r_df = oblicz_dawke_termiczna(r_df, temp_col='IBTS Temp', time_col='Time_Seconds', t_base=state.dose_t_base, start_time_threshold=state.dose_start_time)
+            r_df = oblicz_dawke_termiczna_arrhenius(r_df, temp_col='IBTS Temp', time_col='Time_Seconds', A=const_A, Ea=const_Ea, R=const_R, start_time_threshold=state.dose_start_time)
 
             all_data.append({
                 'Label': f"{f_name.replace('.csv','')} ({agtron_val:.1f})",

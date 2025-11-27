@@ -4,29 +4,25 @@ import os
 import glob
 import plotly.graph_objects as go
 from utils import (
-    get_all_roast_files,
-    parse_roasttime_csv,
-    calculate_thermal_dose,
-    get_agtron,
-    get_plan_metadata,
-    calculate_thermal_dose_arrhenius
+    pobierz_wszystkie_pliki_wypalow,
+    parsuj_csv_roasttime,
+    oblicz_dawke_termiczna,
+    pobierz_agtron,
+    pobierz_metadane_planu,
+    oblicz_dawke_termiczna_arrhenius
 )
+from state import AppState
 
 def get_all_plan_files(base_path='data'):
     """Skanuje wszystkie profile i zwraca listę ścieżek do plików planów."""
     return glob.glob(os.path.join(base_path, '*', 'Plan', '*.csv'))
 
-def render(
-    st,
-    base_data_path: str,
-    dose_t_base: float,
-    dose_start_time: float
-):
+def render(st: object, state: AppState):
     """Renderuje zakładkę Ogólne Porównanie Wypałów."""
     st.subheader("Ogólne Porównanie Dawki Termicznej vs Kolor")
 
-    all_roast_files = get_all_roast_files(base_data_path)
-    all_plan_files = get_all_plan_files(base_data_path)
+    all_roast_files = pobierz_wszystkie_pliki_wypalow(state.base_data_path)
+    all_plan_files = get_all_plan_files(state.base_data_path)
 
     if not all_roast_files:
         st.info("Brak plików wypałów do analizy w żadnym z profili.")
@@ -42,7 +38,7 @@ def render(
         list(plan_options.keys())
     )
 
-    plan_metadata = get_plan_metadata(selected_plan_name)
+    plan_metadata = pobierz_metadane_planu(selected_plan_name)
     const_A = float(plan_metadata.get('A', 0.788))
     const_Ea = float(plan_metadata.get('Ea', 26.02))
     const_R = float(plan_metadata.get('R', 0.008314))
@@ -65,12 +61,12 @@ def render(
         f_name = os.path.basename(r_path)
         profile_name = os.path.basename(os.path.dirname(os.path.dirname(r_path)))
         try:
-            r_df, _ = parse_roasttime_csv(r_path)
-            agtron_val = get_agtron(os.path.join(base_data_path, profile_name), f_name)
+            r_df, _ = parsuj_csv_roasttime(r_path)
+            agtron_val = pobierz_agtron(os.path.join(state.base_data_path, profile_name), f_name)
             if agtron_val is None: continue
 
-            r_df = calculate_thermal_dose(r_df, temp_col='IBTS Temp', time_col='Time_Seconds', t_base=dose_t_base, start_time_threshold=dose_start_time)
-            r_df = calculate_thermal_dose_arrhenius(r_df, temp_col='IBTS Temp', time_col='Time_Seconds', A=const_A, Ea=const_Ea, R=const_R, start_time_threshold=dose_start_time)
+            r_df = oblicz_dawke_termiczna(r_df, temp_col='IBTS Temp', time_col='Time_Seconds', t_base=state.dose_t_base, start_time_threshold=state.dose_start_time)
+            r_df = oblicz_dawke_termiczna_arrhenius(r_df, temp_col='IBTS Temp', time_col='Time_Seconds', A=const_A, Ea=const_Ea, R=const_R, start_time_threshold=state.dose_start_time)
 
             all_data.append({
                 'Label': f"{profile_name} / {f_name.replace('.csv','')} ({agtron_val:.1f})",
