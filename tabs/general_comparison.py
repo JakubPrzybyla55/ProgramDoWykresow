@@ -82,17 +82,56 @@ def render(st: object, state: AppState):
         st.warning("Brak danych do wyświetlenia. Upewnij się, że wybrane wypały mają przypisany kolor Agtron.")
         return
 
-    df_plot = pd.DataFrame(all_data).sort_values(by="Agtron", ascending=False)
+    # Opcje sortowania
+    st.markdown("##### Sortowanie Wykresów")
+    col_sort1, col_sort2 = st.columns(2)
+    with col_sort1:
+        sort_criterion = st.radio(
+            "Kryterium sortowania:",
+            options=["Agtron", "Dawka Termiczna"],
+            horizontal=True,
+            key="gen_sort_crit"
+        )
+    with col_sort2:
+        sort_order = st.radio(
+            "Kolejność:",
+            options=["Rosnąco", "Malejąco"],
+            horizontal=True,
+            key="gen_sort_order"
+        )
 
-    fig = go.Figure()
-    fig.add_trace(go.Bar(
+    df_plot = pd.DataFrame(all_data)
+    ascending = True if sort_order == "Rosnąco" else False
+
+    if sort_criterion == "Agtron":
+        df_plot = df_plot.sort_values(by="Agtron", ascending=ascending)
+    else:
+        # Sortowanie po Dawce (używamy Modelu 1 jako odniesienia dla obu wykresów)
+        df_plot = df_plot.sort_values(by="Dose_Old", ascending=ascending)
+
+    # Wykres 1: Model Oryginalny (Czerwony)
+    fig1 = go.Figure()
+    fig1.add_trace(go.Bar(
         x=df_plot['Label'],
         y=df_plot['Dose_Old'],
         name='Dawka (Model Oryginalny)',
         marker_color='indianred',
         hovertemplate="<b>%{x}</b><br>Dawka (Oryg.): %{y:.0f}<extra></extra>"
     ))
-    fig.add_trace(go.Bar(
+
+    fig1.update_layout(
+        template="plotly_dark",
+        title="Dawka Termiczna (Model 1 - Oryginalny)",
+        xaxis_title="Wypał / Profil (Kolor Agtron)",
+        yaxis_title="Skumulowana Dawka Termiczna",
+        height=400,
+        margin=dict(l=20, r=20, t=40, b=20)
+    )
+    st.plotly_chart(fig1, use_container_width=True)
+
+    # Wykres 2: Model Arrhenius (Niebieski/Łososiowy)
+    fig2 = go.Figure()
+    fig2.add_trace(go.Bar(
         x=df_plot['Label'],
         y=df_plot['Dose_New'],
         name='Dawka (Model Arrhenius)',
@@ -100,13 +139,12 @@ def render(st: object, state: AppState):
         hovertemplate="<b>%{x}</b><br>Dawka (Arrhenius): %{y:.0f}<extra></extra>"
     ))
 
-    fig.update_layout(
-        barmode='group',
+    fig2.update_layout(
         template="plotly_dark",
-        title="Porównanie Dawki Termicznej (dwa modele)",
+        title="Dawka Termiczna (Model 2 - Arrhenius)",
         xaxis_title="Wypał / Profil (Kolor Agtron)",
         yaxis_title="Skumulowana Dawka Termiczna",
-        height=600,
-        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1)
+        height=400,
+        margin=dict(l=20, r=20, t=40, b=20)
     )
-    st.plotly_chart(fig, use_container_width=True)
+    st.plotly_chart(fig2, use_container_width=True)
