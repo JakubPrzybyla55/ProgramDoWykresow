@@ -64,7 +64,7 @@ def render(st: object, state: AppState):
         plan_df = oblicz_dawke_termiczna_arrhenius(plan_df, temp_col='Temperatura', time_col='Time_Seconds', A=const_A, Ea=const_Ea, R=const_R, start_time_threshold=state.dose_start_time)
 
         all_data.append({
-            'Label': f"PLAN ({agtron_teoretyczny:.1f})",
+            'Label': "PLAN",
             'Agtron': agtron_teoretyczny,
             'File': plan_name,
             'Dose_Old': plan_df['Thermal_Dose'].iloc[-1],
@@ -85,7 +85,7 @@ def render(st: object, state: AppState):
             r_df = oblicz_dawke_termiczna_arrhenius(r_df, temp_col='IBTS Temp', time_col='Time_Seconds', A=const_A, Ea=const_Ea, R=const_R, start_time_threshold=state.dose_start_time)
 
             all_data.append({
-                'Label': f"{f_name.replace('.csv','')} ({agtron_val:.1f})",
+                'Label': f"{f_name.replace('.csv','')}",
                 'Agtron': agtron_val,
                 'File': f_name,
                 'Dose_Old': r_df['Thermal_Dose'].iloc[-1],
@@ -101,29 +101,48 @@ def render(st: object, state: AppState):
 
     df_plot = pd.DataFrame(all_data).sort_values(by="Agtron", ascending=False)
 
-    fig = go.Figure()
-    fig.add_trace(go.Bar(
+    # Wykres 1: Model Oryginalny (Czerwony)
+    fig1 = go.Figure()
+    fig1.add_trace(go.Bar(
         x=df_plot['Label'],
         y=df_plot['Dose_Old'],
+        text=df_plot['Agtron'].apply(lambda x: f"{x:.1f}"),
+        textposition='outside',
         name='Dawka (Model Oryginalny)',
         marker_color='indianred',
-        hovertemplate="<b>%{x}</b><br>Dawka (Oryg.): %{y:.0f}<extra></extra>"
-    ))
-    fig.add_trace(go.Bar(
-        x=df_plot['Label'],
-        y=df_plot['Dose_New'],
-        name='Dawka (Model Arrhenius)',
-        marker_color='lightsalmon',
-        hovertemplate="<b>%{x}</b><br>Dawka (Arrhenius): %{y:.0f}<extra></extra>"
+        width=0.4,
+        hovertemplate="<b>%{x}</b><br>Dawka (Oryg.): %{y:.0f}<br>Agtron: %{text}<extra></extra>"
     ))
 
-    fig.update_layout(
-        barmode='group',
+    fig1.update_layout(
         template="plotly_dark",
-        title="Porównanie Dawki Termicznej (dwa modele)",
-        xaxis_title="Wypał (Kolor Agtron)",
-        yaxis_title="Skumulowana Dawka Termiczna",
-        height=600,
-        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1)
+        title="Dawka Termiczna (Model 1 - Oryginalny)",
+        xaxis_title="Wypał",
+        yaxis_title="Skumulowana Dawka",
+        height=400,
+        margin=dict(l=20, r=20, t=40, b=20)
     )
-    st.plotly_chart(fig, use_container_width=True)
+    st.plotly_chart(fig1, use_container_width=True)
+
+    # Wykres 2: Model Arrhenius (Niebieski)
+    fig2 = go.Figure()
+    fig2.add_trace(go.Bar(
+        x=df_plot['Label'],
+        y=df_plot['Dose_New'],
+        text=df_plot['Agtron'].apply(lambda x: f"{x:.1f}"),
+        textposition='outside',
+        name='Dawka (Model Arrhenius)',
+        marker_color='royalblue',
+        width=0.4,
+        hovertemplate="<b>%{x}</b><br>Dawka (Arrhenius): %{y:.0f}<br>Agtron: %{text}<extra></extra>"
+    ))
+
+    fig2.update_layout(
+        template="plotly_dark",
+        title="Dawka Termiczna (Model 2 - Arrhenius)",
+        xaxis_title="Wypał",
+        yaxis_title="Skumulowana Dawka",
+        height=400,
+        margin=dict(l=20, r=20, t=40, b=20)
+    )
+    st.plotly_chart(fig2, use_container_width=True)
